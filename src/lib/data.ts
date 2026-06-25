@@ -55,7 +55,7 @@ export const TEAMS: Record<string, Team> = {
   // Group E
   GER: { id: 'GER', name: 'Germany', code: 'GER', rating: 1736, flag: '🇩🇪', iso2: 'DE' },
   CUW: { id: 'CUW', name: 'Curaçao', code: 'CUW', rating: 1294, flag: '🇨🇼', iso2: 'CW' },
-  CIV: { id: 'CIV', name: "Côte d'Ivoire", code: 'CIV', rating: 80, flag: '🇨🇮', iso2: 'CI' },
+  CIV: { id: 'CIV', name: "Côte d'Ivoire", code: 'CIV', rating: 1499, flag: '🇨🇮', iso2: 'CI' },
   ECU: { id: 'ECU', name: 'Ecuador', code: 'ECU', rating: 1598, flag: '🇪🇨', iso2: 'EC' },
 
   // Group F
