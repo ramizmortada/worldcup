@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import * as Flags from 'country-flag-icons/react/3x2';
-import { TEAMS, GROUPS, generateGroupMatches, KNOCKOUT_TEMPLATES, Team, Match, isPlaceholder } from '@/lib/data';
+import { TEAMS, GROUPS, generateGroupMatches, KNOCKOUT_TEMPLATES, Team, Match, isPlaceholder, MatchApiDetails, MatchStatsItem } from '@/lib/data';
 import {
   calculateGroupStandings,
   calculateThirdPlaceStandings,
@@ -17,12 +17,17 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
-import { Trophy, Sparkles, RefreshCw, Layers, GitCommit, ChevronRight, CloudDownload } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Trophy, Sparkles, RefreshCw, Layers, GitCommit, ChevronRight, CloudDownload, Info, Loader2 } from 'lucide-react';
 
 export default function CompactPredictor() {
   const [matches, setMatches] = useState<Match[]>([]);
   const [selectedGroup, setSelectedGroup] = useState<string>('A');
   const [playedMatchIds, setPlayedMatchIds] = useState<number[]>([]);
+  const [selectedMatchId, setSelectedMatchId] = useState<number | null>(null);
+  const [matchStats, setMatchStats] = useState<Record<string, MatchStatsItem[]>>({});
+  const [loadingStats, setLoadingStats] = useState<string | null>(null);
 
   const [isFetching, setIsFetching] = useState(false);
 
@@ -33,14 +38,14 @@ export default function CompactPredictor() {
         if (!res.ok) throw new Error('API response error');
         return res.json();
       })
-      .then((data: { matches: { id: number; scoreA: number; scoreB: number }[] }) => {
+      .then((data: { matches: { id: number; scoreA: number; scoreB: number; apiDetails?: MatchApiDetails }[] }) => {
         const apiScores = data.matches || [];
         setPlayedMatchIds(apiScores.map(a => a.id));
         const merged = baseMatches.map(m => {
           const apiMatch = apiScores.find(a => a.id === m.id);
           if (apiMatch) {
             // Overwrite with accurate score data from API
-            const updated = { ...m, scoreA: apiMatch.scoreA, scoreB: apiMatch.scoreB };
+            const updated = { ...m, scoreA: apiMatch.scoreA, scoreB: apiMatch.scoreB, apiDetails: apiMatch.apiDetails };
             
             // Auto-propagate winner if group match
             if (updated.scoreA > updated.scoreB) updated.winnerId = updated.teamAId;
@@ -346,6 +351,149 @@ export default function CompactPredictor() {
     return <span className="text-sm shrink-0">{team.flag}</span>;
   };
 
+  const MatchDetailsModal = () => {
+    const match = matches.find(m => m.id === selectedMatchId);
+    if (!match) return null;
+    
+    const teamA = getTeam(match.teamAId);
+    const teamB = getTeam(match.teamBId);
+    
+    const espnId = match.apiDetails?.espnId;
+    const stats = espnId ? matchStats[espnId] : undefined;
+
+    useEffect(() => {
+      if (espnId && !matchStats[espnId] && loadingStats !== espnId) {
+        setLoadingStats(espnId);
+        fetch(`/api/wc2026-match-stats?espnId=${espnId}`)
+          .then(res => res.json())
+          .then(data => {
+            if (data.stats) {
+              setMatchStats(prev => ({ ...prev, [espnId]: data.stats }));
+            }
+          })
+          .catch(console.error)
+          .finally(() => setLoadingStats(null));
+      }
+    }, [espnId, matchStats, loadingStats]);
+
+    const renderStatBar = (stat: MatchStatsItem, index: number) => {
+      const valA = parseFloat(stat.teamAValue.replace('%', ''));
+      const valB = parseFloat(stat.teamBValue.replace('%', ''));
+      const total = valA + valB || 1;
+      const pctA = (valA / total) * 100;
+      const pctB = (valB / total) * 100;
+      
+      const isAHigher = valA > valB;
+      const isBHigher = valB > valA;
+
+      return (
+        <div key={index} className="flex flex-col gap-1.5 py-1.5">
+          <div className="flex justify-between items-center text-xs font-semibold px-1">
+            <span className={isAHigher ? "text-emerald-400" : "text-slate-400"}>{stat.teamAValue}</span>
+            <span className="text-slate-300 text-[11px] tracking-wider uppercase">{stat.label}</span>
+            <span className={isBHigher ? "text-emerald-400" : "text-slate-400"}>{stat.teamBValue}</span>
+          </div>
+          <div className="flex gap-1 h-2 w-full rounded-full overflow-hidden bg-slate-900">
+            <div className={`h-full ${isAHigher ? "bg-emerald-500" : "bg-slate-700"} transition-all`} style={{ width: `${pctA}%` }} />
+            <div className={`h-full ${isBHigher ? "bg-emerald-500" : "bg-slate-700"} transition-all`} style={{ width: `${pctB}%` }} />
+          </div>
+        </div>
+      );
+    };
+
+    return (
+      <Dialog open={selectedMatchId !== null} onOpenChange={(open) => !open && setSelectedMatchId(null)}>
+        <DialogContent className="sm:max-w-md bg-slate-950 border-slate-800 text-slate-200 p-0 overflow-hidden">
+          <div className="p-6 pb-2">
+            <DialogHeader>
+              <DialogTitle className="text-center text-sm font-semibold uppercase tracking-wider text-slate-400">
+                {match.stage === 'group' ? `Group ${match.group}` : match.stage}
+              </DialogTitle>
+            </DialogHeader>
+            <div className="flex items-center justify-between py-4">
+              <div className="flex flex-col items-center gap-2 flex-1">
+                <span className="scale-150"><TeamFlag team={teamA} /></span>
+                <span className="font-bold text-sm text-center">{teamA.name}</span>
+              </div>
+              <div className="flex flex-col items-center gap-1 px-4">
+                <div className="text-3xl font-black tabular-nums tracking-tighter text-emerald-400">
+                  {match.scoreA !== undefined ? match.scoreA : '-'} : {match.scoreB !== undefined ? match.scoreB : '-'}
+                </div>
+                {match.penaltiesA !== undefined && (
+                  <div className="text-xs font-bold text-amber-500">
+                    ({match.penaltiesA} - {match.penaltiesB} pens)
+                  </div>
+                )}
+                <Badge variant="outline" className="mt-1 bg-slate-900 border-slate-700 text-slate-400 text-[10px]">
+                  {match.apiDetails ? match.apiDetails.status : 'Simulated'}
+                </Badge>
+              </div>
+              <div className="flex flex-col items-center gap-2 flex-1">
+                <span className="scale-150"><TeamFlag team={teamB} /></span>
+                <span className="font-bold text-sm text-center">{teamB.name}</span>
+              </div>
+            </div>
+          </div>
+          
+          {match.apiDetails ? (
+            <Tabs defaultValue="stats" className="w-full">
+              <div className="px-6 border-b border-slate-800">
+                <TabsList className="w-full grid grid-cols-2 bg-transparent text-slate-400">
+                  <TabsTrigger value="stats" className="data-active:bg-slate-900 data-active:!text-emerald-400 !text-slate-400 hover:!text-slate-200 transition-colors">Stats</TabsTrigger>
+                  <TabsTrigger value="timeline" className="data-active:bg-slate-900 data-active:!text-emerald-400 !text-slate-400 hover:!text-slate-200 transition-colors">Timeline</TabsTrigger>
+                </TabsList>
+              </div>
+              
+              <TabsContent value="stats" className="m-0">
+                <ScrollArea className="h-[300px] w-full bg-slate-900/30 p-4">
+                  {loadingStats === espnId ? (
+                    <div className="flex flex-col items-center justify-center h-full text-slate-500 gap-2">
+                      <Loader2 className="w-6 h-6 animate-spin" />
+                      <span className="text-xs font-semibold">Loading stats...</span>
+                    </div>
+                  ) : stats && stats.length > 0 ? (
+                    <div className="space-y-1">
+                      {stats.map((stat, idx) => renderStatBar(stat, idx))}
+                    </div>
+                  ) : (
+                    <div className="text-center py-8 text-sm text-slate-500 italic">No detailed stats available.</div>
+                  )}
+                </ScrollArea>
+              </TabsContent>
+
+              <TabsContent value="timeline" className="m-0">
+                <ScrollArea className="h-[300px] w-full bg-slate-900/30 p-4">
+                  {match.apiDetails.events.length > 0 ? (
+                    <div className="space-y-4">
+                      {match.apiDetails.events.map((ev, i) => {
+                        const isTeamA = ev.teamId === teamA.code;
+                        return (
+                          <div key={i} className={`flex items-start gap-3 ${isTeamA ? 'flex-row' : 'flex-row-reverse'}`}>
+                            <div className="text-xs font-bold text-slate-500 w-8 text-center pt-0.5 shrink-0">{ev.clock}</div>
+                            <div className={`flex flex-col ${isTeamA ? 'items-start' : 'items-end'}`}>
+                              <span className="text-sm font-semibold text-slate-200">{ev.playerName}</span>
+                              <span className="text-[10px] text-slate-400 uppercase tracking-wider">{ev.type}</span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="text-center py-8 text-sm text-slate-500 italic">No timeline events recorded.</div>
+                  )}
+                </ScrollArea>
+              </TabsContent>
+            </Tabs>
+          ) : (
+            <div className="text-center py-8 text-sm text-slate-500 italic border-t border-slate-800 bg-slate-900/30">
+              This match was simulated locally.
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+    );
+  };
+
   const renderMatchCard = (m: Match) => {
     const teamA = getTeam(m.teamAId);
     const teamB = getTeam(m.teamBId);
@@ -355,10 +503,8 @@ export default function CompactPredictor() {
     const isPlayed = m.stage === 'group' && playedMatchIds.includes(m.id);
 
     return (
-      <div key={m.id} className={`py-1 transition-opacity ${
-        isPlayed ? 'opacity-70' : ''
-      }`}>
-        <div className="flex items-center justify-between gap-2.5">
+      <div key={m.id} className="relative group cursor-pointer" onClick={() => setSelectedMatchId(m.id)}>
+        <div className="flex items-center justify-between py-1.5 px-2 hover:bg-slate-800/30 rounded transition-colors group-hover:bg-slate-800/50">
           {/* Team A */}
           <div className="flex-1 flex items-center justify-end gap-1.5">
             <span className="text-[11px] font-semibold truncate max-w-[70px] text-slate-200">{teamA.code}</span>
@@ -369,6 +515,7 @@ export default function CompactPredictor() {
               readOnly={isPlayed}
               value={m.scoreA !== undefined ? m.scoreA : ''}
               onChange={(e) => updateScore(m.id, 'A', e.target.value)}
+              onClick={(e) => e.stopPropagation()}
               className={`w-8 h-8 text-center p-0 font-extrabold text-xs bg-slate-950 border-slate-800 ${
                 isPlayed 
                   ? `pointer-events-none select-none ${isWinnerA ? 'text-emerald-400 bg-slate-900/80 border-slate-700/65 font-black shadow-inner shadow-emerald-500/10' : 'text-slate-400 bg-slate-950/80 border-slate-900'}` 
@@ -386,6 +533,7 @@ export default function CompactPredictor() {
               readOnly={isPlayed}
               value={m.scoreB !== undefined ? m.scoreB : ''}
               onChange={(e) => updateScore(m.id, 'B', e.target.value)}
+              onClick={(e) => e.stopPropagation()}
               className={`w-8 h-8 text-center p-0 font-extrabold text-xs bg-slate-950 border-slate-800 ${
                 isPlayed 
                   ? `pointer-events-none select-none ${isWinnerB ? 'text-emerald-400 bg-slate-900/80 border-slate-700/65 font-black shadow-inner shadow-emerald-500/10' : 'text-slate-400 bg-slate-950/80 border-slate-900'}` 
@@ -410,7 +558,7 @@ export default function CompactPredictor() {
     const isSpecialMatch = m.stage === 'final' || m.stage === 'third-place';
 
     return (
-      <Card key={m.id} className={`relative overflow-visible w-full shrink-0 bg-slate-950/20 border-slate-850 hover:border-slate-800 transition-colors p-1.5 flex flex-col justify-center h-[80px] ${
+      <Card key={m.id} onClick={() => setSelectedMatchId(m.id)} className={`relative overflow-visible w-full shrink-0 bg-slate-950/20 border-slate-850 hover:border-slate-800 transition-colors p-1.5 flex flex-col justify-center cursor-pointer h-[80px] ${
         isSpecialMatch ? 'h-[104px]' : ''
       }`}>
         {/* Match header */}
@@ -701,6 +849,7 @@ export default function CompactPredictor() {
              </section>
            </div>
         </ScrollArea>
+        <MatchDetailsModal />
     </div>
   );
 }

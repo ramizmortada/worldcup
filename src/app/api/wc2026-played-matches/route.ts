@@ -88,7 +88,7 @@ export async function GET() {
 
     const data = await res.json();
     const events = data.events || [];
-    const mappedMatches: { id: number; scoreA: number; scoreB: number }[] = [];
+    const mappedMatches: any[] = [];
 
     for (const event of events) {
       const comps = event.competitions || [];
@@ -123,6 +123,19 @@ export async function GET() {
         continue;
       }
 
+      const matchEvents = (comp.details || []).map((detail: any) => ({
+        type: detail.type?.text || 'Unknown',
+        clock: detail.clock?.displayValue || '',
+        teamId: detail.team?.id === home.team?.id ? homeAbbr : detail.team?.id === away.team?.id ? awayAbbr : '',
+        playerName: detail.athletesInvolved?.[0]?.shortName || detail.athletesInvolved?.[0]?.displayName || ''
+      }));
+
+      const apiDetails = {
+        status: statusType.description || statusType.name || 'Unknown',
+        events: matchEvents,
+        espnId: event.id
+      };
+
       // Find match in local templates
       for (const lm of localTemplates) {
         if (lm.teamA === homeAbbr && lm.teamB === awayAbbr) {
@@ -130,6 +143,7 @@ export async function GET() {
             id: lm.id,
             scoreA: scoreHome,
             scoreB: scoreAway,
+            apiDetails
           });
           break;
         } else if (lm.teamA === awayAbbr && lm.teamB === homeAbbr) {
@@ -137,6 +151,7 @@ export async function GET() {
             id: lm.id,
             scoreA: scoreAway,
             scoreB: scoreHome,
+            apiDetails
           });
           break;
         }

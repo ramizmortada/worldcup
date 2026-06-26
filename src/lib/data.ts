@@ -7,6 +7,25 @@ export interface Team {
   iso2: string;   // ISO 2-letter code
 }
 
+export interface MatchEvent {
+  type: string;
+  clock: string;
+  teamId: string;
+  playerName: string;
+}
+
+export interface MatchStatsItem {
+  label: string;
+  teamAValue: string;
+  teamBValue: string;
+}
+
+export interface MatchApiDetails {
+  status: string;
+  events: MatchEvent[];
+  espnId?: string;
+}
+
 export interface Match {
   id: number;
   group: string | null;
@@ -14,12 +33,15 @@ export interface Match {
   teamBId: string;
   scoreA?: number;
   scoreB?: number;
+  pointsA?: number; // Performance points for alternative tournament mode
+  pointsB?: number;
   penaltiesA?: number;
   penaltiesB?: number;
   winnerId?: string; // ID of the advancing team (for knockouts)
   date: string;
   venue: string;
   stage: 'group' | 'R32' | 'R16' | 'QF' | 'SF' | 'third-place' | 'final';
+  apiDetails?: MatchApiDetails;
 }
 
 export interface Group {

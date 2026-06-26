@@ -1,4 +1,5 @@
 import { Team, Match, Group, TEAMS, GROUPS, KNOCKOUT_TEMPLATES, isPlaceholder } from './data';
+import { OFFICIAL_495_TABLE } from './allocation-table';
 
 export interface StandingsRow {
   teamId: string;
@@ -211,47 +212,38 @@ const COMPATIBILITY_MAP: Record<string, string[]> = {
   K: ['D', 'E', 'I', 'J', 'L']
 };
 
-// Backtracking solver to allocate 8 third place teams to the 8 group winners
-export function allocateThirdPlaces(qualifiedGroups: string[]): Record<string, string> | null {
-  const slotKeys = Object.keys(COMPATIBILITY_MAP);
+const allocationCache = new Map<string, Record<string, string> | null>();
+
+// Simple O(1) lookup based on official FIFA allocation table
+export function allocateThirdPlaces(
+  qualifiedGroups: string[],
+  slots: Record<string, string | null>
+): Record<string, string> | null {
   const result: Record<string, string> = {};
-  const usedGroups = new Set<string>();
-
-  function backtrack(slotIdx: number): boolean {
-    if (slotIdx === slotKeys.length) {
-      return true;
+  
+  // Create sorted combination string (e.g. "ABCDEFGH")
+  const comboKey = [...qualifiedGroups].sort().join('');
+  
+  // Look up official FIFA allocation for this combination
+  const allocation = OFFICIAL_495_TABLE[comboKey];
+  
+  if (!allocation) {
+    console.error(`Invalid or unsupported 3rd place combination: ${comboKey}`);
+    return null;
+  }
+  
+  // Check if this allocation fits into the currently required slots
+  const slotKeys = Object.keys(slots);
+  for (const slotKey of slotKeys) {
+    const requiredGroup = allocation[slotKey];
+    if (requiredGroup) {
+        result[slotKey] = requiredGroup;
+    } else {
+        return null;
     }
-
-    const slot = slotKeys[slotIdx];
-    const allowed = COMPATIBILITY_MAP[slot];
-
-    for (const group of qualifiedGroups) {
-      if (!usedGroups.has(group) && allowed.includes(group)) {
-        result[slot] = group;
-        usedGroups.add(group);
-
-        if (backtrack(slotIdx + 1)) {
-          return true;
-        }
-
-        usedGroups.delete(group);
-        delete result[slot];
-      }
-    }
-
-    return false;
   }
 
-  // Pre-sort slotKeys to solve most constrained slots first (helps backtracking efficiency)
-  slotKeys.sort((a, b) => {
-    // Intersect allowed with qualifiedGroups to find actual degree
-    const degA = COMPATIBILITY_MAP[a].filter(x => qualifiedGroups.includes(x)).length;
-    const degB = COMPATIBILITY_MAP[b].filter(x => qualifiedGroups.includes(x)).length;
-    return degA - degB;
-  });
-
-  const success = backtrack(0);
-  return success ? result : null;
+  return result;
 }
 
 interface ConfirmedPositions {
@@ -309,6 +301,91 @@ export function getConfirmedGroupPositions(groupName: string, matches: Match[]):
   return { winner, runnerUp };
 }
 
+export interface ThirdPlaceOutcome {
+  groupName: string;
+  teamId: string;
+  pts: number;
+  gd: number;
+  gf: number;
+  rating: number;
+}
+
+export interface GroupThirdPlacePotential {
+  best: ThirdPlaceOutcome;
+  worst: ThirdPlaceOutcome;
+  possibleTeamIds: Set<string>;
+}
+
+function compareOutcomes(a: ThirdPlaceOutcome, b: ThirdPlaceOutcome): number {
+  if (b.pts !== a.pts) return b.pts - a.pts;
+  if (b.gd !== a.gd) return b.gd - a.gd;
+  if (b.gf !== a.gf) return b.gf - a.gf;
+  return b.rating - a.rating;
+}
+
+export function getGroupThirdPlacePotential(groupName: string, matches: Match[]): GroupThirdPlacePotential {
+  const groupMatches = matches.filter(m => m.group === groupName);
+  const unplayed = groupMatches.filter(m => m.scoreA === undefined || m.scoreB === undefined);
+  
+  if (unplayed.length === 0) {
+    const standings = calculateGroupStandings(groupName, matches);
+    const t = standings[2];
+    const outcome = { groupName, teamId: t.teamId, pts: t.pts, gd: t.gd, gf: t.gf, rating: TEAMS[t.teamId]?.rating || 0 };
+    return { best: outcome, worst: outcome, possibleTeamIds: new Set([t.teamId]) };
+  }
+
+  const outcomes: [number, number][] = [[1, 0], [0, 0], [0, 1]];
+  let best: ThirdPlaceOutcome | null = null;
+  let worst: ThirdPlaceOutcome | null = null;
+  const possibleTeamIds = new Set<string>();
+
+  const simulate = (index: number, simMatches: Match[]) => {
+    if (index === unplayed.length) {
+      const standings = calculateGroupStandings(groupName, simMatches);
+      if (standings.length < 3) return;
+      const t = standings[2];
+      const outcome = { groupName, teamId: t.teamId, pts: t.pts, gd: t.gd, gf: t.gf, rating: TEAMS[t.teamId]?.rating || 0 };
+      
+      possibleTeamIds.add(t.teamId);
+      
+      if (!best || compareOutcomes(outcome, best) < 0) { // outcome is better than best
+        best = outcome;
+      }
+      if (!worst || compareOutcomes(outcome, worst) > 0) { // outcome is worse than worst
+        worst = outcome;
+      }
+      return;
+    }
+    const current = unplayed[index];
+    for (const out of outcomes) {
+      const copy = { ...current, scoreA: out[0], scoreB: out[1] };
+      const nextSim = simMatches.map(m => m.id === current.id ? copy : m);
+      simulate(index + 1, nextSim);
+    }
+  };
+
+  simulate(0, groupMatches);
+  
+  return { best: best!, worst: worst!, possibleTeamIds };
+}
+
+function getCombinations<T>(array: T[], size: number): T[][] {
+  const result: T[][] = [];
+  function combine(start: number, combo: T[]) {
+    if (combo.length === size) {
+      result.push([...combo]);
+      return;
+    }
+    for (let i = start; i < array.length; i++) {
+      combo.push(array[i]);
+      combine(i + 1, combo);
+      combo.pop();
+    }
+  }
+  combine(0, []);
+  return result;
+}
+
 // Generate the complete Round of 32 pairings based on group standings
 export function populateRoundOf32(
   groupStandings: Record<string, StandingsRow[]>,
@@ -344,9 +421,86 @@ export function populateRoundOf32(
 
   // Get qualified third placed teams group map
   const qualifiedThirds = thirdPlaceStandings.filter(x => x.qualified).map(x => x.groupName);
-  const thirdPlaceAllocation = allocateThirdPlaces(qualifiedThirds) || {};
+  const thirdPlaceAllocation = allocateThirdPlaces(qualifiedThirds, { E: null, I: null, A: null, L: null, D: null, G: null, B: null, K: null }) || {};
+
+  // Find dynamically locked third place matchups
+  const lockedAllocations: Record<string, string> = {};
+  if (!allGroupsCompleted) {
+    const allGroupNames = GROUPS.map(g => g.name);
+    const groupPotentials: Record<string, GroupThirdPlacePotential> = {};
+    allGroupNames.forEach(g => {
+      groupPotentials[g] = getGroupThirdPlacePotential(g, knockoutMatches);
+    });
+
+    const validCombinations: string[][] = [];
+    const combinations = getCombinations(allGroupNames, 8);
+    for (const combo of combinations) {
+      const comboSet = new Set(combo);
+      const testOutcomes: ThirdPlaceOutcome[] = [];
+      
+      allGroupNames.forEach(g => {
+        if (comboSet.has(g)) {
+          testOutcomes.push(groupPotentials[g].best);
+        } else {
+          testOutcomes.push(groupPotentials[g].worst);
+        }
+      });
+
+      testOutcomes.sort(compareOutcomes);
+      const top8Groups = new Set(testOutcomes.slice(0, 8).map(o => o.groupName));
+      let possible = true;
+      for (const g of combo) {
+        if (!top8Groups.has(g)) {
+          possible = false;
+          break;
+        }
+      }
+      if (possible) {
+        validCombinations.push(combo);
+      }
+    }
+
+    const slotKeys = Object.keys(COMPATIBILITY_MAP);
+    for (const slot of slotKeys) {
+      let lockedTeamId: string | null = null;
+      let isLocked = true;
+
+      for (const combo of validCombinations) {
+        const allocation = allocateThirdPlaces(combo, { [slot]: null });
+        if (!allocation) continue;
+        
+        const allocatedGroup = allocation[slot];
+        if (!allocatedGroup) {
+          isLocked = false;
+          break;
+        }
+
+        const pot = groupPotentials[allocatedGroup];
+        if (pot.possibleTeamIds.size !== 1) {
+          isLocked = false;
+          break;
+        }
+        
+        const teamId = Array.from(pot.possibleTeamIds)[0];
+        if (lockedTeamId === null) {
+          lockedTeamId = teamId;
+        } else if (lockedTeamId !== teamId) {
+          isLocked = false;
+          break;
+        }
+      }
+
+      if (isLocked && lockedTeamId) {
+        lockedAllocations[slot] = lockedTeamId;
+      }
+    }
+  }
 
   const getThirdPlaceTeamId = (winnerSlot: string, defaultPlaceholder: string) => {
+    if (lockedAllocations[winnerSlot]) {
+      return lockedAllocations[winnerSlot];
+    }
+    
     if (!allGroupsCompleted) return defaultPlaceholder;
     const allocatedGroup = thirdPlaceAllocation[winnerSlot];
     if (!allocatedGroup) return defaultPlaceholder;

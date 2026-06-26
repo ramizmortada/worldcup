@@ -3,7 +3,30 @@
     {
       "id": 1,
       "scoreA": 2,
-      "scoreB": 0
+      "scoreB": 0,
+      "apiDetails": {
+        "status": "Full Time",
+        "events": [
+          {
+            "type": "Goal",
+            "clock": "45'",
+            "teamId": "MEX",
+            "playerName": "H. Lozano"
+          },
+          {
+            "type": "Yellow Card",
+            "clock": "80'",
+            "teamId": "RSA",
+            "playerName": "P. Tau"
+          },
+          {
+            "type": "Goal",
+            "clock": "90'+2",
+            "teamId": "MEX",
+            "playerName": "S. Gim\u00e9nez"
+          }
+        ]
+      }
     },
     {
       "id": 2,
