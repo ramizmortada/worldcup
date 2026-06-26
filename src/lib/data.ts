@@ -24,6 +24,10 @@ export interface MatchApiDetails {
   status: string;
   events: MatchEvent[];
   espnId?: string;
+  homeStats?: any[];
+  awayStats?: any[];
+  homeTeamId?: string;
+  awayTeamId?: string;
 }
 
 export interface Match {

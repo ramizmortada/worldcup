@@ -9,6 +9,8 @@ import {
   populateRoundOf32,
   updateKnockoutMatches,
   calculateDynamicRatings,
+  calculatePerformanceScore,
+  getPerformanceBreakdown,
   StandingsRow,
   ThirdPlaceRow
 } from '@/lib/bracket-calculator';
@@ -22,6 +24,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Trophy, Sparkles, RefreshCw, Layers, GitCommit, ChevronRight, CloudDownload, Info, Loader2 } from 'lucide-react';
 
 export default function CompactPredictor() {
+  const [tournamentMode, setTournamentMode] = useState<'standard' | 'performance'>('standard');
   const [matches, setMatches] = useState<Match[]>([]);
   const [selectedGroup, setSelectedGroup] = useState<string>('A');
   const [playedMatchIds, setPlayedMatchIds] = useState<number[]>([]);
@@ -31,14 +34,26 @@ export default function CompactPredictor() {
 
   const [isFetching, setIsFetching] = useState(false);
 
-  const fetchLiveMatches = (baseMatches: Match[], fallback: boolean = false) => {
+  const propagateMatches = (baseMatches: Match[], mode: 'standard' | 'performance') => {
+    return updateKnockoutMatches(
+      populateRoundOf32(
+        Object.fromEntries(GROUPS.map(g => [g.name, calculateGroupStandings(g.name, baseMatches, mode)])),
+        calculateThirdPlaceStandings(baseMatches, mode),
+        baseMatches,
+        mode
+      ),
+      mode
+    );
+  };
+
+  const fetchLiveMatches = (baseMatches: Match[], fallback: boolean = false, mode = tournamentMode) => {
     setIsFetching(true);
     fetch('/api/wc2026-played-matches')
       .then(res => {
         if (!res.ok) throw new Error('API response error');
         return res.json();
       })
-      .then((data: { matches: { id: number; scoreA: number; scoreB: number; apiDetails?: MatchApiDetails }[] }) => {
+      .then((data: { matches: { id: number; teamAId?: string; teamBId?: string; scoreA: number; scoreB: number; apiDetails?: MatchApiDetails }[] }) => {
         const apiScores = data.matches || [];
         setPlayedMatchIds(apiScores.map(a => a.id));
         const merged = baseMatches.map(m => {
@@ -46,6 +61,9 @@ export default function CompactPredictor() {
           if (apiMatch) {
             // Overwrite with accurate score data from API
             const updated = { ...m, scoreA: apiMatch.scoreA, scoreB: apiMatch.scoreB, apiDetails: apiMatch.apiDetails };
+            
+            if (apiMatch.teamAId) updated.teamAId = apiMatch.teamAId;
+            if (apiMatch.teamBId) updated.teamBId = apiMatch.teamBId;
             
             // Auto-propagate winner if group match
             if (updated.scoreA > updated.scoreB) updated.winnerId = updated.teamAId;
@@ -58,13 +76,7 @@ export default function CompactPredictor() {
         });
 
         // Run calculation sequence to propagate knockout teams
-        const recalculated = updateKnockoutMatches(
-          populateRoundOf32(
-            Object.fromEntries(GROUPS.map(g => [g.name, calculateGroupStandings(g.name, merged)])),
-            calculateThirdPlaceStandings(merged),
-            merged
-          )
-        );
+        const recalculated = propagateMatches(merged, mode);
 
         setMatches(recalculated);
         localStorage.setItem('wc2026_predictions', JSON.stringify(recalculated));
@@ -108,23 +120,30 @@ export default function CompactPredictor() {
       if (playedMatchIds.includes(m.id)) {
         const existing = matches.find(ex => ex.id === m.id);
         if (existing) {
-          return { ...m, scoreA: existing.scoreA, scoreB: existing.scoreB, winnerId: existing.winnerId };
+          return { ...m, teamAId: existing.teamAId, teamBId: existing.teamBId, scoreA: existing.scoreA, scoreB: existing.scoreB, winnerId: existing.winnerId, apiDetails: existing.apiDetails };
         }
       }
-      return { ...m, scoreA: undefined, scoreB: undefined, winnerId: undefined, penaltiesA: undefined, penaltiesB: undefined };
+      return { ...m, scoreA: undefined, scoreB: undefined, winnerId: undefined, penaltiesA: undefined, penaltiesB: undefined, pointsA: undefined, pointsB: undefined };
     });
-    savePredictions(merged);
+    savePredictions(propagateMatches(merged, tournamentMode));
   };
+
+  useEffect(() => {
+    if (matches.length > 0) {
+      savePredictions(propagateMatches(matches, tournamentMode));
+    }
+  }, [tournamentMode]);
 
   // Standings & Match derivation
   const groupStandings: Record<string, StandingsRow[]> = {};
   GROUPS.forEach(g => {
-    groupStandings[g.name] = calculateGroupStandings(g.name, matches);
+    groupStandings[g.name] = calculateGroupStandings(g.name, matches, tournamentMode);
   });
 
-  const thirdPlaceStandings = calculateThirdPlaceStandings(matches);
+  const thirdPlaceStandings = calculateThirdPlaceStandings(matches, tournamentMode);
   const populatedMatches = updateKnockoutMatches(
-    populateRoundOf32(groupStandings, thirdPlaceStandings, matches)
+    populateRoundOf32(groupStandings, thirdPlaceStandings, matches, tournamentMode),
+    tournamentMode
   );
 
   const liveRatings = calculateDynamicRatings(matches, playedMatchIds);
@@ -249,13 +268,13 @@ export default function CompactPredictor() {
       }
     });
 
-    let currentStandings = Object.fromEntries(GROUPS.map(g => [g.name, calculateGroupStandings(g.name, simulated)]));
-    let currentThirds = calculateThirdPlaceStandings(simulated);
-    let knockoutSim = populateRoundOf32(currentStandings, currentThirds, simulated);
+    let currentStandings = Object.fromEntries(GROUPS.map(g => [g.name, calculateGroupStandings(g.name, simulated, tournamentMode)]));
+    let currentThirds = calculateThirdPlaceStandings(simulated, tournamentMode);
+    let knockoutSim = populateRoundOf32(currentStandings, currentThirds, simulated, tournamentMode);
 
     const stages: ('R32' | 'R16' | 'QF' | 'SF' | 'third-place' | 'final')[] = ['R32', 'R16', 'QF', 'SF', 'third-place', 'final'];
     stages.forEach(stage => {
-      knockoutSim = updateKnockoutMatches(knockoutSim);
+      knockoutSim = updateKnockoutMatches(knockoutSim, tournamentMode);
       knockoutSim.forEach(m => {
         if (m.stage === stage) {
           if (isPlaceholder(m.teamAId) || isPlaceholder(m.teamBId)) return;
@@ -279,7 +298,7 @@ export default function CompactPredictor() {
       });
     });
 
-    savePredictions(updateKnockoutMatches(knockoutSim));
+    savePredictions(updateKnockoutMatches(knockoutSim, tournamentMode));
   };
 
   const getTeam = (id: string): Team & { rank?: number } => {
@@ -404,7 +423,15 @@ export default function CompactPredictor() {
     return (
       <Dialog open={selectedMatchId !== null} onOpenChange={(open) => !open && setSelectedMatchId(null)}>
         <DialogContent className="sm:max-w-md bg-slate-950 border-slate-800 text-slate-200 p-0 overflow-hidden">
-          <div className="p-6 pb-2">
+          <div className="p-6 pb-2 relative">
+            {tournamentMode === 'performance' && (match.pointsA !== undefined || match.scoreA !== undefined) && (
+              <div className="absolute top-2 right-4 text-[10px] text-amber-500 font-bold uppercase flex gap-2">
+                <span>Fair Play Points:</span>
+                <span className="text-emerald-400">{calculatePerformanceScore(match, 'A')}</span>
+                <span className="text-slate-500">-</span>
+                <span className="text-emerald-400">{calculatePerformanceScore(match, 'B')}</span>
+              </div>
+            )}
             <DialogHeader>
               <DialogTitle className="text-center text-sm font-semibold uppercase tracking-wider text-slate-400">
                 {match.stage === 'group' ? `Group ${match.group}` : match.stage}
@@ -436,13 +463,71 @@ export default function CompactPredictor() {
           </div>
           
           {match.apiDetails ? (
-            <Tabs defaultValue="stats" className="w-full">
+            <Tabs defaultValue={tournamentMode === 'performance' ? "fairplay" : "stats"} className="w-full">
               <div className="px-6 border-b border-slate-800">
-                <TabsList className="w-full grid grid-cols-2 bg-transparent text-slate-400">
+                <TabsList className={`w-full grid ${tournamentMode === 'performance' ? 'grid-cols-3' : 'grid-cols-2'} bg-transparent text-slate-400`}>
+                  {tournamentMode === 'performance' && (
+                    <TabsTrigger value="fairplay" className="data-active:bg-slate-900 data-active:!text-emerald-400 !text-slate-400 hover:!text-slate-200 transition-colors">Fair Play</TabsTrigger>
+                  )}
                   <TabsTrigger value="stats" className="data-active:bg-slate-900 data-active:!text-emerald-400 !text-slate-400 hover:!text-slate-200 transition-colors">Stats</TabsTrigger>
                   <TabsTrigger value="timeline" className="data-active:bg-slate-900 data-active:!text-emerald-400 !text-slate-400 hover:!text-slate-200 transition-colors">Timeline</TabsTrigger>
                 </TabsList>
               </div>
+              
+              {tournamentMode === 'performance' && (
+                <TabsContent value="fairplay" className="m-0">
+                  <ScrollArea className="h-[300px] w-full bg-slate-900/30 p-4">
+                    <div className="space-y-1">
+                      {(() => {
+                        const bdA = getPerformanceBreakdown(match, 'A').breakdown;
+                        const bdB = getPerformanceBreakdown(match, 'B').breakdown;
+                        const rows = [
+                          { label: 'Goals Scored', valA: bdA.goals, valB: bdB.goals },
+                          { label: 'Goals Conceded', valA: bdA.goalsConceded, valB: bdB.goalsConceded },
+                          { label: 'Clean Sheet', valA: bdA.cleanSheet, valB: bdB.cleanSheet },
+                          { label: 'Possession', valA: bdA.possession, valB: bdB.possession },
+                          { label: 'Shots on Target', valA: bdA.shotsOnTarget, valB: bdB.shotsOnTarget },
+                          { label: 'Corners', valA: bdA.corners, valB: bdB.corners },
+                          { label: 'Saves', valA: bdA.saves, valB: bdB.saves },
+                          { label: 'Blocked Shots', valA: bdA.blockedShots, valB: bdB.blockedShots },
+                          { label: 'Interceptions', valA: bdA.interceptions, valB: bdB.interceptions },
+                          { label: 'Clearances', valA: bdA.clearances, valB: bdB.clearances },
+                          { label: 'Tackles Won', valA: bdA.wonTackles, valB: bdB.wonTackles },
+                          { label: 'Fouls', valA: bdA.fouls, valB: bdB.fouls },
+                          { label: 'Offsides', valA: bdA.offsides, valB: bdB.offsides },
+                          { label: 'Yellow Cards', valA: bdA.yellowCards, valB: bdB.yellowCards },
+                        ];
+                        
+                        return rows.map((r, idx) => {
+                          const isAHigher = r.valA > r.valB;
+                          const isBHigher = r.valB > r.valA;
+                          const total = Math.max(Math.abs(r.valA) + Math.abs(r.valB), 1);
+                          const pctA = (Math.abs(r.valA) / total) * 100;
+                          const pctB = (Math.abs(r.valB) / total) * 100;
+                          
+                          return (
+                            <div key={idx} className="flex flex-col gap-1.5 py-1.5">
+                              <div className="flex justify-between items-center text-xs font-semibold px-1">
+                                <span className={isAHigher ? "text-emerald-400" : "text-slate-400"}>
+                                  {r.valA > 0 ? '+' : ''}{r.valA}
+                                </span>
+                                <span className="text-slate-300 text-[11px] tracking-wider uppercase">{r.label}</span>
+                                <span className={isBHigher ? "text-emerald-400" : "text-slate-400"}>
+                                  {r.valB > 0 ? '+' : ''}{r.valB}
+                                </span>
+                              </div>
+                              <div className="flex gap-1 h-2 w-full rounded-full overflow-hidden bg-slate-900">
+                                <div className={`h-full ${isAHigher ? "bg-emerald-500" : "bg-slate-700"} transition-all`} style={{ width: `${pctA}%` }} />
+                                <div className={`h-full ${isBHigher ? "bg-emerald-500" : "bg-slate-700"} transition-all`} style={{ width: `${pctB}%` }} />
+                              </div>
+                            </div>
+                          );
+                        });
+                      })()}
+                    </div>
+                  </ScrollArea>
+                </TabsContent>
+              )}
               
               <TabsContent value="stats" className="m-0">
                 <ScrollArea className="h-[300px] w-full bg-slate-900/30 p-4">
@@ -497,7 +582,16 @@ export default function CompactPredictor() {
   const renderMatchCard = (m: Match) => {
     const teamA = getTeam(m.teamAId);
     const teamB = getTeam(m.teamBId);
-    const winnerId = m.scoreA !== undefined && m.scoreB !== undefined ? (m.scoreA > m.scoreB ? m.teamAId : m.scoreA < m.scoreB ? m.teamBId : 'draw') : null;
+    let winnerId = null;
+    if (m.scoreA !== undefined && m.scoreB !== undefined) {
+      if (tournamentMode === 'performance') {
+        const ptsA = calculatePerformanceScore(m, 'A');
+        const ptsB = calculatePerformanceScore(m, 'B');
+        winnerId = ptsA > ptsB ? m.teamAId : ptsA < ptsB ? m.teamBId : 'draw';
+      } else {
+        winnerId = m.scoreA > m.scoreB ? m.teamAId : m.scoreA < m.scoreB ? m.teamBId : 'draw';
+      }
+    }
     const isWinnerA = winnerId === m.teamAId;
     const isWinnerB = winnerId === m.teamBId;
     const isPlayed = m.stage === 'group' && playedMatchIds.includes(m.id);
@@ -510,13 +604,14 @@ export default function CompactPredictor() {
             <span className="text-[11px] font-semibold truncate max-w-[70px] text-slate-200">{teamA.code}</span>
             <TeamFlag team={teamA} />
             <Input
-              type="number"
-              min="-1"
-              readOnly={isPlayed}
-              value={m.scoreA !== undefined ? m.scoreA : ''}
+              type="text"
+              readOnly={isPlayed || tournamentMode === 'performance'}
+              value={tournamentMode === 'performance' ? (m.scoreA !== undefined ? `${calculatePerformanceScore(m, 'A')} (${m.scoreA})` : '') : (m.scoreA !== undefined ? m.scoreA : '')}
               onChange={(e) => updateScore(m.id, 'A', e.target.value)}
               onClick={(e) => e.stopPropagation()}
-              className={`w-8 h-8 text-center p-0 font-extrabold text-xs bg-slate-950 border-slate-800 ${
+              className={`h-8 text-center font-extrabold text-xs bg-slate-950 border-slate-800 ${
+                tournamentMode === 'performance' ? 'w-14 px-1 tracking-tighter' : 'w-8 p-0'
+              } ${
                 isPlayed 
                   ? `pointer-events-none select-none ${isWinnerA ? 'text-emerald-400 bg-slate-900/80 border-slate-700/65 font-black shadow-inner shadow-emerald-500/10' : 'text-slate-400 bg-slate-950/80 border-slate-900'}` 
                   : 'text-emerald-400 focus-visible:ring-emerald-500/20'
@@ -528,13 +623,14 @@ export default function CompactPredictor() {
           {/* Team B */}
           <div className="flex-1 flex items-center justify-start gap-1.5">
             <Input
-              type="number"
-              min="-1"
-              readOnly={isPlayed}
-              value={m.scoreB !== undefined ? m.scoreB : ''}
+              type="text"
+              readOnly={isPlayed || tournamentMode === 'performance'}
+              value={tournamentMode === 'performance' ? (m.scoreB !== undefined ? `${calculatePerformanceScore(m, 'B')} (${m.scoreB})` : '') : (m.scoreB !== undefined ? m.scoreB : '')}
               onChange={(e) => updateScore(m.id, 'B', e.target.value)}
               onClick={(e) => e.stopPropagation()}
-              className={`w-8 h-8 text-center p-0 font-extrabold text-xs bg-slate-950 border-slate-800 ${
+              className={`h-8 text-center font-extrabold text-xs bg-slate-950 border-slate-800 ${
+                tournamentMode === 'performance' ? 'w-14 px-1 tracking-tighter' : 'w-8 p-0'
+              } ${
                 isPlayed 
                   ? `pointer-events-none select-none ${isWinnerB ? 'text-emerald-400 bg-slate-900/80 border-slate-700/65 font-black shadow-inner shadow-emerald-500/10' : 'text-slate-400 bg-slate-950/80 border-slate-900'}` 
                   : 'text-emerald-400 focus-visible:ring-emerald-500/20'
@@ -554,7 +650,27 @@ export default function CompactPredictor() {
     const teamA = getTeam(m.teamAId);
     const teamB = getTeam(m.teamBId);
     const isDraw = m.scoreA !== undefined && m.scoreB !== undefined && m.scoreA === m.scoreB;
-    const hasWinner = m.winnerId && !isPlaceholder(m.winnerId);
+    let winnerId = null;
+    if (m.scoreA !== undefined && m.scoreB !== undefined) {
+      if (tournamentMode === 'performance') {
+        const ptsA = calculatePerformanceScore(m, 'A');
+        const ptsB = calculatePerformanceScore(m, 'B');
+        winnerId = ptsA > ptsB ? m.teamAId : ptsA < ptsB ? m.teamBId : null;
+        if (!winnerId && m.penaltiesA !== undefined && m.penaltiesB !== undefined) {
+          winnerId = m.penaltiesA > m.penaltiesB ? m.teamAId : m.teamBId;
+        }
+      } else {
+        winnerId = m.scoreA > m.scoreB ? m.teamAId : m.scoreA < m.scoreB ? m.teamBId : null;
+        if (!winnerId && m.penaltiesA !== undefined && m.penaltiesB !== undefined) {
+          winnerId = m.penaltiesA > m.penaltiesB ? m.teamAId : m.teamBId;
+        }
+      }
+    }
+    
+    // Fallback to m.winnerId if score is not present or something
+    if (!winnerId) winnerId = m.winnerId;
+
+    const hasWinner = winnerId && !isPlaceholder(winnerId);
     const isSpecialMatch = m.stage === 'final' || m.stage === 'third-place';
 
     return (
@@ -574,12 +690,12 @@ export default function CompactPredictor() {
         <div className="space-y-1">
           {/* Team A */}
           <div className={`flex items-center justify-between py-0.5 px-1.5 rounded transition-colors ${
-            m.winnerId === m.teamAId ? 'bg-emerald-950/40 border border-emerald-900/50' : m.winnerId && !isPlaceholder(m.winnerId) ? 'opacity-40' : 'bg-slate-900/40 border border-slate-800/50'
+            winnerId === m.teamAId ? 'bg-emerald-950/40 border border-emerald-900/50' : winnerId && !isPlaceholder(winnerId) ? 'opacity-40' : 'bg-slate-900/40 border border-slate-800/50'
           }`}>
             <div className="flex items-center gap-1.5 min-w-0 flex-1 pr-1">
               <span className="scale-110 shrink-0"><TeamFlag team={teamA} /></span>
               <span className={`text-xs font-bold truncate min-w-0 ${
-                m.winnerId === m.teamAId ? 'text-emerald-400 font-extrabold' : 'text-slate-300'
+                winnerId === m.teamAId ? 'text-emerald-400 font-extrabold' : 'text-slate-300'
               }`} title={teamA.name}>{teamA.code}</span>
             </div>
             <div className="flex items-center gap-1 shrink-0">
@@ -589,7 +705,7 @@ export default function CompactPredictor() {
                   onClick={() => togglePenaltyWinner(m.id)}
                   title="Click to switch shootout winner"
                   className={`text-[10px] font-extrabold font-mono px-1 py-0.5 rounded border transition-all cursor-pointer hover:scale-105 active:scale-95 ${
-                    m.winnerId === m.teamAId 
+                    winnerId === m.teamAId 
                       ? 'bg-amber-500/25 border-amber-500/50 text-amber-400 font-black shadow-sm shadow-amber-500/10' 
                       : 'bg-slate-900/60 border-slate-800 text-slate-500 hover:text-amber-500/70 hover:border-amber-500/30'
                   }`}
@@ -598,12 +714,14 @@ export default function CompactPredictor() {
                 </button>
               )}
               <Input
-                type="number"
-                min="-1"
+                type="text"
+                readOnly={tournamentMode === 'performance'}
                 disabled={isPlaceholder(m.teamAId) || isPlaceholder(m.teamBId)}
-                value={m.scoreA !== undefined ? m.scoreA : ''}
+                value={tournamentMode === 'performance' ? (m.scoreA !== undefined ? `${calculatePerformanceScore(m, 'A')} (${m.scoreA})` : '') : (m.scoreA !== undefined ? m.scoreA : '')}
                 onChange={(e) => updateScore(m.id, 'A', e.target.value)}
-                className={`w-7 h-7 text-center p-0 font-extrabold text-sm bg-slate-950 border-slate-800 disabled:opacity-100 disabled:cursor-not-allowed ${
+                className={`h-7 text-center font-extrabold text-[10px] bg-slate-950 border-slate-800 disabled:opacity-100 disabled:cursor-not-allowed ${
+                  tournamentMode === 'performance' ? 'w-14 px-1 tracking-tighter' : 'w-7 p-0'
+                } ${
                   m.winnerId === m.teamAId ? 'text-emerald-400 font-black' : m.winnerId && !isPlaceholder(m.winnerId) ? 'text-slate-500' : 'text-emerald-400 focus-visible:ring-emerald-500/20'
                 }`}
                 placeholder="-"
@@ -612,12 +730,12 @@ export default function CompactPredictor() {
           </div>
           {/* Team B */}
           <div className={`flex items-center justify-between py-0.5 px-1.5 rounded transition-colors ${
-            m.winnerId === m.teamBId ? 'bg-emerald-950/40 border border-emerald-900/50' : m.winnerId && !isPlaceholder(m.winnerId) ? 'opacity-40' : 'bg-slate-900/40 border border-slate-800/50'
+            winnerId === m.teamBId ? 'bg-emerald-950/40 border border-emerald-900/50' : winnerId && !isPlaceholder(winnerId) ? 'opacity-40' : 'bg-slate-900/40 border border-slate-800/50'
           }`}>
             <div className="flex items-center gap-1.5 min-w-0 flex-1 pr-1">
               <span className="scale-110 shrink-0"><TeamFlag team={teamB} /></span>
               <span className={`text-xs font-bold truncate min-w-0 ${
-                m.winnerId === m.teamBId ? 'text-emerald-400 font-extrabold' : 'text-slate-300'
+                winnerId === m.teamBId ? 'text-emerald-400 font-extrabold' : 'text-slate-300'
               }`} title={teamB.name}>{teamB.code}</span>
             </div>
             <div className="flex items-center gap-1 shrink-0">
@@ -627,7 +745,7 @@ export default function CompactPredictor() {
                   onClick={() => togglePenaltyWinner(m.id)}
                   title="Click to switch shootout winner"
                   className={`text-[10px] font-extrabold font-mono px-1 py-0.5 rounded border transition-all cursor-pointer hover:scale-105 active:scale-95 ${
-                    m.winnerId === m.teamBId 
+                    winnerId === m.teamBId 
                       ? 'bg-amber-500/25 border-amber-500/50 text-amber-400 font-black shadow-sm shadow-amber-500/10' 
                       : 'bg-slate-900/60 border-slate-800 text-slate-500 hover:text-amber-500/70 hover:border-amber-500/30'
                   }`}
@@ -636,12 +754,14 @@ export default function CompactPredictor() {
                 </button>
               )}
               <Input
-                type="number"
-                min="-1"
+                type="text"
+                readOnly={tournamentMode === 'performance'}
                 disabled={isPlaceholder(m.teamAId) || isPlaceholder(m.teamBId)}
-                value={m.scoreB !== undefined ? m.scoreB : ''}
+                value={tournamentMode === 'performance' ? (m.scoreB !== undefined ? `${calculatePerformanceScore(m, 'B')} (${m.scoreB})` : '') : (m.scoreB !== undefined ? m.scoreB : '')}
                 onChange={(e) => updateScore(m.id, 'B', e.target.value)}
-                className={`w-7 h-7 text-center p-0 font-extrabold text-sm bg-slate-950 border-slate-800 disabled:opacity-100 disabled:cursor-not-allowed ${
+                className={`h-7 text-center font-extrabold text-[10px] bg-slate-950 border-slate-800 disabled:opacity-100 disabled:cursor-not-allowed ${
+                  tournamentMode === 'performance' ? 'w-14 px-1 tracking-tighter' : 'w-7 p-0'
+                } ${
                   m.winnerId === m.teamBId ? 'text-emerald-400 font-black' : m.winnerId && !isPlaceholder(m.winnerId) ? 'text-slate-500' : 'text-emerald-400 focus-visible:ring-emerald-500/20'
                 }`}
                 placeholder="-"
@@ -717,6 +837,25 @@ export default function CompactPredictor() {
               <span>Winner: {champion.name}</span>
             </div>
           )}
+          
+          <div className="hidden sm:flex items-center ml-6 bg-slate-950 rounded-full p-1 border border-slate-800 shadow-inner">
+            <button
+              onClick={() => setTournamentMode('standard')}
+              className={`px-3 py-1 rounded-full text-[11px] uppercase tracking-wider font-bold transition-all ${
+                tournamentMode === 'standard' ? 'bg-slate-700 text-white shadow-sm' : 'text-slate-500 hover:text-slate-300'
+              }`}
+            >
+              Standard
+            </button>
+            <button
+              onClick={() => setTournamentMode('performance')}
+              className={`px-3 py-1 rounded-full text-[11px] uppercase tracking-wider font-bold transition-all ${
+                tournamentMode === 'performance' ? 'bg-amber-600 text-white shadow-sm' : 'text-slate-500 hover:text-slate-300'
+              }`}
+            >
+              Fair Play
+            </button>
+          </div>
         </div>
         <div className="flex items-center gap-2">
           <Button

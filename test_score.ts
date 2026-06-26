@@ -1,0 +1,10 @@
+import { calculatePerformanceScore } from './src/lib/bracket-calculator'; 
+import { generateGroupMatches, TEAMS } from './src/lib/data'; 
+const fs = require('fs'); 
+const data = JSON.parse(fs.readFileSync('public/api/wc2026-played-matches.json', 'utf8')); 
+const match = data.matches.find((m: any) => m.id === 22); 
+const localMatches = generateGroupMatches(); 
+const lm = localMatches.find((x: any) => x.id === 22); 
+const testMatch: any = { ...lm, scoreA: match.scoreA, scoreB: match.scoreB, apiDetails: match.apiDetails }; 
+console.log('Team A (PAR):', calculatePerformanceScore(testMatch, 'A')); 
+console.log('Team B (TUR):', calculatePerformanceScore(testMatch, 'B'));

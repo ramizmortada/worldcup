@@ -58,8 +58,231 @@ export function calculateDynamicRatings(matches: Match[], playedMatchIds: number
   return ratings;
 }
 
+// Deterministic pseudo-random based on match id
+function seededRandom(seed: number) {
+  const x = Math.sin(seed++) * 10000;
+  return x - Math.floor(x);
+}
+
+
+export type PerformanceBreakdown = {
+  total: number;
+  isSimulated: boolean;
+  breakdown: {
+    goals: number;
+    cleanSheet: number;
+    goalsConceded: number;
+    possession: number;
+    shotsOnTarget: number;
+    corners: number;
+    fouls: number;
+    yellowCards: number;
+    saves: number;
+    blockedShots: number;
+    interceptions: number;
+    clearances: number;
+    wonTackles: number;
+    offsides: number;
+  };
+};
+
+export function getPerformanceBreakdown(match: Match, teamType: 'A' | 'B'): PerformanceBreakdown {
+  const emptyBreakdown = { goals: 0, cleanSheet: 0, goalsConceded: 0, possession: 0, shotsOnTarget: 0, corners: 0, fouls: 0, yellowCards: 0, saves: 0, blockedShots: 0, interceptions: 0, clearances: 0, wonTackles: 0, offsides: 0 };
+  if (match.scoreA === undefined || match.scoreB === undefined) return { total: 0, isSimulated: false, breakdown: emptyBreakdown };
+  if (teamType === 'A' && match.pointsA !== undefined) return { total: match.pointsA, isSimulated: false, breakdown: emptyBreakdown };
+  if (teamType === 'B' && match.pointsB !== undefined) return { total: match.pointsB, isSimulated: false, breakdown: emptyBreakdown };
+
+  const teamA = TEAMS[match.teamAId];
+  const teamB = TEAMS[match.teamBId];
+  if (!teamA || !teamB) return { total: 0, isSimulated: false, breakdown: emptyBreakdown };
+
+  const isA = teamType === 'A';
+  const goals = isA ? match.scoreA : match.scoreB;
+  
+  let score = 0;
+  let goalsPoints = 0;
+  if (goals !== undefined) {
+    if (goals > 0) goalsPoints += 50;
+    if (goals > 1) goalsPoints += 40;
+    if (goals > 2) goalsPoints += 30;
+    if (goals > 3) goalsPoints += 20;
+    if (goals > 4) goalsPoints += (goals - 4) * 10;
+  }
+  score += goalsPoints;
+  
+  const opponentGoals = isA ? match.scoreB : match.scoreA;
+  let cleanSheetPoints = 0;
+  if (opponentGoals === 0) cleanSheetPoints = 40;
+  score += cleanSheetPoints;
+
+  let goalsConcededPoints = 0;
+  if (opponentGoals !== undefined && opponentGoals > 0) {
+    goalsConcededPoints = opponentGoals * -15;
+  }
+  score += goalsConcededPoints;
+
+  // Use REAL stats if available!
+  let realStats = null;
+  if (match.apiDetails) {
+    const targetTeamId = isA ? teamA.id : teamB.id;
+    if (match.apiDetails.homeTeamId === targetTeamId) {
+      realStats = match.apiDetails.homeStats;
+    } else if (match.apiDetails.awayTeamId === targetTeamId) {
+      realStats = match.apiDetails.awayStats;
+    } else {
+      // Fallback if IDs don't strictly match string-wise but we know they are in the match
+      realStats = isA ? match.apiDetails.homeStats : match.apiDetails.awayStats;
+    }
+  }
+  
+  if (realStats && realStats.length > 0) {
+    const getStat = (name: string) => {
+      const s = realStats.find((x: any) => x.name === name);
+      return s ? parseFloat(s.displayValue) : 0;
+    };
+
+    const possession = getStat('possessionPct');
+    const shotsOnTarget = getStat('shotsOnTarget');
+    const corners = getStat('wonCorners');
+    const fouls = getStat('foulsCommitted');
+    
+    const saves = getStat('saves');
+    const blockedShots = getStat('blockedShots');
+    const interceptions = getStat('interceptions');
+    const clearances = getStat('effectiveClearance') || getStat('totalClearance');
+    const wonTackles = getStat('effectiveTackles') || getStat('totalTackles');
+    const offsides = getStat('offsides');
+    
+    // Yellow cards might be in stats or we can count from events
+    const yellows = getStat('yellowCards') || (match.apiDetails!.events || []).filter(e => e.type === 'Yellow Card' && e.teamId === (isA ? teamA.code : teamB.code)).length;
+
+    const possessionPoints = possession * 1;
+    const shotsPoints = shotsOnTarget * 5;
+    const cornersPoints = corners * 3;
+    const foulsPoints = fouls * 2;
+    const yellowsPoints = yellows * 10;
+    
+    const savesPoints = saves * 5;
+    const blocksPoints = blockedShots * 3;
+    const interceptionsPoints = interceptions * 2;
+    const clearancesPoints = clearances * 1;
+    const tacklesPoints = wonTackles * 2;
+    const offsidesPoints = offsides * 2; // will subtract
+
+    score += possessionPoints;
+    score += shotsPoints;
+    score += cornersPoints;
+    score -= foulsPoints;
+    score -= yellowsPoints;
+    
+    score += savesPoints;
+    score += blocksPoints;
+    score += interceptionsPoints;
+    score += clearancesPoints;
+    score += tacklesPoints;
+    score -= offsidesPoints;
+    
+    return {
+      total: Math.round(score),
+      isSimulated: false,
+      breakdown: {
+        goals: goalsPoints,
+        cleanSheet: cleanSheetPoints,
+        goalsConceded: goalsConcededPoints,
+        possession: possessionPoints,
+        shotsOnTarget: shotsPoints,
+        corners: cornersPoints,
+        fouls: -foulsPoints,
+        yellowCards: -yellowsPoints,
+        saves: savesPoints,
+        blockedShots: blocksPoints,
+        interceptions: interceptionsPoints,
+        clearances: clearancesPoints,
+        wonTackles: tacklesPoints,
+        offsides: -offsidesPoints
+      }
+    };
+  }
+
+  // Fallback: Simulate stats deterministically based on ratings and actual goals
+  const ratingDiff = teamA.rating - teamB.rating;
+  
+  // Possession (base 50%, +/- up to 20% based on rating)
+  const possessionShift = Math.max(-20, Math.min(20, ratingDiff / 20));
+  const possessionA = 50 + possessionShift;
+  const possessionB = 100 - possessionA;
+  const possessionPoints = (isA ? possessionA : possessionB) * 1; // +1 pt per %
+  score += possessionPoints;
+
+  // Shots on Target (Goals + random extra based on possession)
+  const extraShots = Math.floor(seededRandom(match.id + (isA ? 1 : 2)) * 5 * (isA ? possessionA : possessionB) / 50);
+  const shotsPoints = ((goals || 0) + extraShots) * 5;
+  score += shotsPoints;
+
+  // Corners
+  const corners = Math.floor(seededRandom(match.id + (isA ? 3 : 4)) * 8 * (isA ? possessionA : possessionB) / 50);
+  const cornersPoints = corners * 3;
+  score += cornersPoints;
+
+  // Fouls and Cards
+  const foulsSim = Math.floor(seededRandom(match.id + (isA ? 5 : 6)) * 15);
+  const foulsPoints = foulsSim * 2;
+  score -= foulsPoints;
+  
+  const yellowsSim = Math.floor(seededRandom(match.id + (isA ? 7 : 8)) * 3);
+  const yellowsPoints = yellowsSim * 10;
+  score -= yellowsPoints;
+  
+  // Simulate defensive stats
+  const savesSim = Math.floor(seededRandom(match.id + (isA ? 9 : 10)) * 5);
+  const blocksSim = Math.floor(seededRandom(match.id + (isA ? 11 : 12)) * 4);
+  const interceptionsSim = Math.floor(seededRandom(match.id + (isA ? 13 : 14)) * 10);
+  const clearancesSim = Math.floor(seededRandom(match.id + (isA ? 15 : 16)) * 15);
+  const tacklesSim = Math.floor(seededRandom(match.id + (isA ? 17 : 18)) * 12);
+  const offsidesSim = Math.floor(seededRandom(match.id + (isA ? 19 : 20)) * 3);
+  
+  const savesPoints = savesSim * 5;
+  const blocksPoints = blocksSim * 3;
+  const interceptionsPoints = interceptionsSim * 2;
+  const clearancesPoints = clearancesSim * 1;
+  const tacklesPoints = tacklesSim * 2;
+  const offsidesPoints = offsidesSim * 2;
+
+  score += savesPoints;
+  score += blocksPoints;
+  score += interceptionsPoints;
+  score += clearancesPoints;
+  score += tacklesPoints;
+  score -= offsidesPoints;
+
+  return {
+    total: Math.round(score),
+    isSimulated: true,
+    breakdown: {
+      goals: goalsPoints,
+      cleanSheet: cleanSheetPoints,
+      goalsConceded: goalsConcededPoints,
+      possession: possessionPoints,
+      shotsOnTarget: shotsPoints,
+      corners: cornersPoints,
+      fouls: -foulsPoints,
+      yellowCards: -yellowsPoints,
+      saves: savesPoints,
+      blockedShots: blocksPoints,
+      interceptions: interceptionsPoints,
+      clearances: clearancesPoints,
+      wonTackles: tacklesPoints,
+      offsides: -offsidesPoints
+    }
+  };
+}
+
+export function calculatePerformanceScore(match: Match, teamType: 'A' | 'B'): number {
+  return getPerformanceBreakdown(match, teamType).total;
+}
+
 // Calculate standings for a single group based on predicted scores
-export function calculateGroupStandings(groupName: string, matches: Match[]): StandingsRow[] {
+export function calculateGroupStandings(groupName: string, matches: Match[], mode: 'standard' | 'performance' = 'standard'): StandingsRow[] {
   const group = GROUPS.find(g => g.name === groupName);
   if (!group) return [];
 
@@ -88,28 +311,56 @@ export function calculateGroupStandings(groupName: string, matches: Match[]): St
     tA.gd = tA.gf - tA.ga;
     tB.gd = tB.gf - tB.ga;
 
-    if (m.scoreA > m.scoreB) {
+    let aWins = false;
+    let bWins = false;
+    let isDraw = false;
+    
+    let ptsA = 0;
+    let ptsB = 0;
+
+    if (mode === 'performance') {
+      ptsA = calculatePerformanceScore(m, 'A');
+      ptsB = calculatePerformanceScore(m, 'B');
+      if (ptsA > ptsB) aWins = true;
+      else if (ptsB > ptsA) bWins = true;
+      else isDraw = true;
+      
+      tA.pts += ptsA;
+      tB.pts += ptsB;
+    } else {
+      if (m.scoreA > m.scoreB) aWins = true;
+      else if (m.scoreA < m.scoreB) bWins = true;
+      else isDraw = true;
+    }
+
+    if (aWins) {
       tA.w += 1;
-      tA.pts += 3;
+      if (mode === 'standard') tA.pts += 3;
       tB.l += 1;
-    } else if (m.scoreA < m.scoreB) {
+    } else if (bWins) {
       tB.w += 1;
-      tB.pts += 3;
+      if (mode === 'standard') tB.pts += 3;
       tA.l += 1;
     } else {
       tA.d += 1;
       tB.d += 1;
-      tA.pts += 1;
-      tB.pts += 1;
+      if (mode === 'standard') {
+        tA.pts += 1;
+        tB.pts += 1;
+      }
     }
   });
 
-  // Sort rows based on: 1. Points, 2. Head-to-Head (Points, GD, GF), 3. Overall GD, 4. Overall GF, 5. Team Rating
-  return Object.values(rows).sort((a, b) => {
-    // 1. Points in all group matches
-    if (b.pts !== a.pts) return b.pts - a.pts;
+  // Sort teams based on mode
+  const sorted = Object.values(rows).sort((a, b) => {
+    if (a.pts !== b.pts) return b.pts - a.pts; // 1. Points
+    
+    // In standard mode, use Goal Difference, then Goals For.
+    // In performance mode, tiebreaker is also GD and GF, because the user asked to keep it simple and fair.
+    if (a.gd !== b.gd) return b.gd - a.gd; // 2. Goal Difference
+    if (a.gf !== b.gf) return b.gf - a.gf; // 3. Goals For
 
-    // Check for ties and calculate head-to-head records
+    // 4. Head-to-head points
     const tiedTeams = Object.values(rows).filter(r => r.pts === a.pts);
     if (tiedTeams.length > 1) {
       const tiedIds = tiedTeams.map(r => r.teamId);
@@ -122,16 +373,29 @@ export function calculateGroupStandings(groupName: string, matches: Match[]): St
         groupMatches.forEach(m => {
           if (m.scoreA === undefined || m.scoreB === undefined) return;
           if (tiedIds.includes(m.teamAId) && tiedIds.includes(m.teamBId)) {
+            let aWinsH2H = false;
+            let bWinsH2H = false;
+            
+            if (mode === 'performance') {
+              const ptsA = calculatePerformanceScore(m, 'A');
+              const ptsB = calculatePerformanceScore(m, 'B');
+              if (ptsA > ptsB) aWinsH2H = true;
+              else if (ptsB > ptsA) bWinsH2H = true;
+            } else {
+              if (m.scoreA > m.scoreB) aWinsH2H = true;
+              else if (m.scoreA < m.scoreB) bWinsH2H = true;
+            }
+
             if (m.teamAId === teamId) {
               h2hGf += m.scoreA;
               h2hGd += (m.scoreA - m.scoreB);
-              if (m.scoreA > m.scoreB) h2hPts += 3;
-              else if (m.scoreA === m.scoreB) h2hPts += 1;
+              if (aWinsH2H) h2hPts += 3;
+              else if (!aWinsH2H && !bWinsH2H) h2hPts += 1;
             } else if (m.teamBId === teamId) {
               h2hGf += m.scoreB;
               h2hGd += (m.scoreB - m.scoreA);
-              if (m.scoreB > m.scoreA) h2hPts += 3;
-              else if (m.scoreA === m.scoreB) h2hPts += 1;
+              if (bWinsH2H) h2hPts += 3;
+              else if (!aWinsH2H && !bWinsH2H) h2hPts += 1;
             }
           }
         });
@@ -149,17 +413,12 @@ export function calculateGroupStandings(groupName: string, matches: Match[]): St
       if (statsB.gf !== statsA.gf) return statsB.gf - statsA.gf;
     }
 
-    // 5. Goal difference in all group matches
-    if (b.gd !== a.gd) return b.gd - a.gd;
-
-    // 6. Goals scored in all group matches
-    if (b.gf !== a.gf) return b.gf - a.gf;
-
-    // 7. Team Rating (Proxy for FIFA World Ranking)
+    // 5. Team Rating (Proxy for FIFA World Ranking)
     const ratingA = TEAMS[a.teamId]?.rating || 0;
     const ratingB = TEAMS[b.teamId]?.rating || 0;
     return ratingB - ratingA;
   });
+  return sorted;
 }
 
 export interface ThirdPlaceRow extends StandingsRow {
@@ -168,16 +427,17 @@ export interface ThirdPlaceRow extends StandingsRow {
 }
 
 // Calculate the rankings of the 3rd placed teams from all 12 groups
-export function calculateThirdPlaceStandings(matches: Match[]): ThirdPlaceRow[] {
+export function calculateThirdPlaceStandings(matches: Match[], mode: 'performance' | 'standard' = 'standard'): ThirdPlaceRow[] {
+  const allGroups = GROUPS.map(g => g.name);
   const thirdPlaceTeams: ThirdPlaceRow[] = [];
 
-  GROUPS.forEach(g => {
-    const standings = calculateGroupStandings(g.name, matches);
+  allGroups.forEach(groupName => {
+    const standings = calculateGroupStandings(groupName, matches, mode);
     if (standings.length >= 3) {
       const row3 = standings[2]; // 3rd placed team
       thirdPlaceTeams.push({
         ...row3,
-        groupName: g.name,
+        groupName: groupName,
         qualified: false
       });
     }
@@ -251,7 +511,7 @@ interface ConfirmedPositions {
   runnerUp: string;
 }
 
-export function getConfirmedGroupPositions(groupName: string, matches: Match[]): ConfirmedPositions {
+export function getConfirmedGroupPositions(groupName: string, matches: Match[], mode: 'standard' | 'performance' = 'standard'): ConfirmedPositions {
   const group = GROUPS.find(g => g.name === groupName);
   if (!group) return { winner: '?', runnerUp: '?' };
 
@@ -260,7 +520,7 @@ export function getConfirmedGroupPositions(groupName: string, matches: Match[]):
 
   // If all matches are played, return the actual standings
   if (unplayed.length === 0) {
-    const standings = calculateGroupStandings(groupName, matches);
+    const standings = calculateGroupStandings(groupName, matches, mode);
     return {
       winner: standings[0]?.teamId || '?',
       runnerUp: standings[1]?.teamId || '?',
@@ -274,7 +534,7 @@ export function getConfirmedGroupPositions(groupName: string, matches: Match[]):
 
   const simulateOutcomes = (index: number, simulatedMatches: Match[]) => {
     if (index === unplayed.length) {
-      const standings = calculateGroupStandings(groupName, simulatedMatches);
+      const standings = calculateGroupStandings(groupName, simulatedMatches, mode);
       if (standings.length >= 2) {
         possibleWinners.add(standings[0]?.teamId || '?');
         possibleRunnerUps.add(standings[1]?.teamId || '?');
@@ -323,12 +583,12 @@ function compareOutcomes(a: ThirdPlaceOutcome, b: ThirdPlaceOutcome): number {
   return b.rating - a.rating;
 }
 
-export function getGroupThirdPlacePotential(groupName: string, matches: Match[]): GroupThirdPlacePotential {
+export function getGroupThirdPlacePotential(groupName: string, matches: Match[], mode: 'standard' | 'performance' = 'standard'): GroupThirdPlacePotential {
   const groupMatches = matches.filter(m => m.group === groupName);
   const unplayed = groupMatches.filter(m => m.scoreA === undefined || m.scoreB === undefined);
   
   if (unplayed.length === 0) {
-    const standings = calculateGroupStandings(groupName, matches);
+    const standings = calculateGroupStandings(groupName, matches, mode);
     const t = standings[2];
     const outcome = { groupName, teamId: t.teamId, pts: t.pts, gd: t.gd, gf: t.gf, rating: TEAMS[t.teamId]?.rating || 0 };
     return { best: outcome, worst: outcome, possibleTeamIds: new Set([t.teamId]) };
@@ -341,7 +601,7 @@ export function getGroupThirdPlacePotential(groupName: string, matches: Match[])
 
   const simulate = (index: number, simMatches: Match[]) => {
     if (index === unplayed.length) {
-      const standings = calculateGroupStandings(groupName, simMatches);
+      const standings = calculateGroupStandings(groupName, simMatches, mode);
       if (standings.length < 3) return;
       const t = standings[2];
       const outcome = { groupName, teamId: t.teamId, pts: t.pts, gd: t.gd, gf: t.gf, rating: TEAMS[t.teamId]?.rating || 0 };
@@ -390,14 +650,15 @@ function getCombinations<T>(array: T[], size: number): T[][] {
 export function populateRoundOf32(
   groupStandings: Record<string, StandingsRow[]>,
   thirdPlaceStandings: ThirdPlaceRow[],
-  knockoutMatches: Match[]
+  knockoutMatches: Match[],
+  mode: 'standard' | 'performance' = 'standard'
 ): Match[] {
   const updatedMatches = knockoutMatches.map(m => ({ ...m }));
 
   // Pre-calculate confirmed positions for all groups
   const confirmedPositions: Record<string, ConfirmedPositions> = {};
   GROUPS.forEach(g => {
-    confirmedPositions[g.name] = getConfirmedGroupPositions(g.name, knockoutMatches);
+    confirmedPositions[g.name] = getConfirmedGroupPositions(g.name, knockoutMatches, mode);
   });
 
   // Identify completed groups (groups where all 6 matches have scores filled)
@@ -429,7 +690,7 @@ export function populateRoundOf32(
     const allGroupNames = GROUPS.map(g => g.name);
     const groupPotentials: Record<string, GroupThirdPlacePotential> = {};
     allGroupNames.forEach(g => {
-      groupPotentials[g] = getGroupThirdPlacePotential(g, knockoutMatches);
+      groupPotentials[g] = getGroupThirdPlacePotential(g, knockoutMatches, mode);
     });
 
     const validCombinations: string[][] = [];
@@ -545,11 +806,36 @@ export function populateRoundOf32(
 }
 
 // Propagate winners from R32 matches to the subsequent knockout matches
-export function updateKnockoutMatches(matches: Match[]): Match[] {
-  const updated = matches.map(m => ({ ...m }));
+export function updateKnockoutMatches(matches: Match[], mode: 'performance' | 'standard' = 'standard'): Match[] {
+  const currentMatches = [...matches];
 
-  const getWinner = (matchId: number): string => {
-    const m = updated.find(x => x.id === matchId);
+  // Helper to determine winner of a match
+  const getWinner = (match: Match): string | null => {
+    if (match.scoreA === undefined || match.scoreB === undefined) return null;
+    
+    if (mode === 'performance') {
+      const ptsA = calculatePerformanceScore(match, 'A');
+      const ptsB = calculatePerformanceScore(match, 'B');
+      if (ptsA > ptsB) return match.teamAId;
+      if (ptsB > ptsA) return match.teamBId;
+      // If points are tied, fallback to penalty logic
+      if (match.penaltiesA !== undefined && match.penaltiesB !== undefined) {
+        return match.penaltiesA > match.penaltiesB ? match.teamAId : match.teamBId;
+      }
+      return null;
+    }
+
+    if (match.scoreA > match.scoreB) return match.teamAId;
+    if (match.scoreA < match.scoreB) return match.teamBId;
+    
+    if (match.penaltiesA !== undefined && match.penaltiesB !== undefined) {
+      return match.penaltiesA > match.penaltiesB ? match.teamAId : match.teamBId;
+    }
+    return null;
+  };
+
+  const getWinnerId = (matchId: number): string => {
+    const m = currentMatches.find(x => x.id === matchId);
     if (!m) return `W${matchId}`;
     
     // If the match has a confirmed winner
@@ -557,24 +843,16 @@ export function updateKnockoutMatches(matches: Match[]): Match[] {
       return m.winnerId;
     }
     
-    // If scores are entered and there is a winner
-    if (m.scoreA !== undefined && m.scoreB !== undefined) {
-      let wId = '?';
-      if (m.scoreA > m.scoreB) wId = m.teamAId;
-      else if (m.scoreA < m.scoreB) wId = m.teamBId;
-      else if (m.penaltiesA !== undefined && m.penaltiesB !== undefined) {
-        wId = m.penaltiesA > m.penaltiesB ? m.teamAId : m.teamBId;
-      }
-      if (wId !== '?' && !isPlaceholder(wId)) {
-        return wId;
-      }
+    const wId = getWinner(m);
+    if (wId && !isPlaceholder(wId)) {
+      return wId;
     }
     
     return `W${matchId}`;
   };
 
-  const getLoser = (matchId: number): string => {
-    const m = updated.find(x => x.id === matchId);
+  const getLoserId = (matchId: number): string => {
+    const m = currentMatches.find((x: Match) => x.id === matchId);
     if (!m) return `L${matchId}`;
     
     // If the match has a confirmed winner/loser
@@ -587,10 +865,20 @@ export function updateKnockoutMatches(matches: Match[]): Match[] {
     
     if (m.scoreA !== undefined && m.scoreB !== undefined) {
       let lId = '?';
-      if (m.scoreA > m.scoreB) lId = m.teamBId;
-      else if (m.scoreA < m.scoreB) lId = m.teamAId;
-      else if (m.penaltiesA !== undefined && m.penaltiesB !== undefined) {
-        lId = m.penaltiesA > m.penaltiesB ? m.teamBId : m.teamAId;
+      if (mode === 'performance') {
+        const ptsA = calculatePerformanceScore(m, 'A');
+        const ptsB = calculatePerformanceScore(m, 'B');
+        if (ptsA > ptsB) lId = m.teamBId;
+        else if (ptsB > ptsA) lId = m.teamAId;
+        else if (m.penaltiesA !== undefined && m.penaltiesB !== undefined) {
+          lId = m.penaltiesA > m.penaltiesB ? m.teamBId : m.teamAId;
+        }
+      } else {
+        if (m.scoreA > m.scoreB) lId = m.teamBId;
+        else if (m.scoreA < m.scoreB) lId = m.teamAId;
+        else if (m.penaltiesA !== undefined && m.penaltiesB !== undefined) {
+          lId = m.penaltiesA > m.penaltiesB ? m.teamBId : m.teamAId;
+        }
       }
       if (lId !== '?' && !isPlaceholder(lId)) {
         return lId;
@@ -602,7 +890,7 @@ export function updateKnockoutMatches(matches: Match[]): Match[] {
 
   // Helper to set team A or B of a match
   const setTeams = (matchId: number, teamA: string, teamB: string) => {
-    const m = updated.find(x => x.id === matchId);
+    const m = currentMatches.find((x: Match) => x.id === matchId);
     if (m) {
       const changed = m.teamAId !== teamA || m.teamBId !== teamB;
       m.teamAId = teamA;
@@ -614,35 +902,37 @@ export function updateKnockoutMatches(matches: Match[]): Match[] {
         m.winnerId = undefined;
         m.penaltiesA = undefined;
         m.penaltiesB = undefined;
+        m.pointsA = undefined;
+        m.pointsB = undefined;
       }
     }
   };
 
   // R16 (89 to 96)
-  setTeams(89, getWinner(74), getWinner(77));
-  setTeams(90, getWinner(73), getWinner(75));
-  setTeams(91, getWinner(76), getWinner(78));
-  setTeams(92, getWinner(79), getWinner(80));
-  setTeams(93, getWinner(83), getWinner(84));
-  setTeams(94, getWinner(81), getWinner(82));
-  setTeams(95, getWinner(86), getWinner(88));
-  setTeams(96, getWinner(85), getWinner(87));
+  setTeams(89, getWinnerId(74), getWinnerId(77));
+  setTeams(90, getWinnerId(73), getWinnerId(75));
+  setTeams(91, getWinnerId(76), getWinnerId(78));
+  setTeams(92, getWinnerId(79), getWinnerId(80));
+  setTeams(93, getWinnerId(83), getWinnerId(84));
+  setTeams(94, getWinnerId(81), getWinnerId(82));
+  setTeams(95, getWinnerId(86), getWinnerId(88));
+  setTeams(96, getWinnerId(85), getWinnerId(87));
 
   // QF (97 to 100)
-  setTeams(97, getWinner(89), getWinner(90));
-  setTeams(98, getWinner(93), getWinner(94));
-  setTeams(99, getWinner(91), getWinner(92));
-  setTeams(100, getWinner(95), getWinner(96));
+  setTeams(97, getWinnerId(89), getWinnerId(90));
+  setTeams(98, getWinnerId(93), getWinnerId(94));
+  setTeams(99, getWinnerId(91), getWinnerId(92));
+  setTeams(100, getWinnerId(95), getWinnerId(96));
 
   // SF (101 to 102)
-  setTeams(101, getWinner(97), getWinner(98));
-  setTeams(102, getWinner(99), getWinner(100));
+  setTeams(101, getWinnerId(97), getWinnerId(98));
+  setTeams(102, getWinnerId(99), getWinnerId(100));
 
   // Third-place (103)
-  setTeams(103, getLoser(101), getLoser(102));
+  setTeams(103, getLoserId(101), getLoserId(102));
 
   // Final (104)
-  setTeams(104, getWinner(101), getWinner(102));
+  setTeams(104, getWinnerId(101), getWinnerId(102));
 
-  return updated;
+  return currentMatches;
 }

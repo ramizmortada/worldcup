@@ -67,6 +67,7 @@ async function getLocalFallback(): Promise<any> {
 export async function GET() {
   const localTemplates = generateLocalMatches();
   const espnUrl = 'https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard?dates=20260611-20260627&limit=200';
+  const bakedData = await getLocalFallback();
 
   try {
     const controller = new AbortController();
@@ -130,27 +131,35 @@ export async function GET() {
         playerName: detail.athletesInvolved?.[0]?.shortName || detail.athletesInvolved?.[0]?.displayName || ''
       }));
 
+      const bakedMatch = bakedData.matches.find((m: any) => m.apiDetails && m.apiDetails.espnId === event.id);
+      
+      const homeStats = (bakedMatch?.apiDetails?.homeStats?.length > (home.statistics?.length || 0)) 
+        ? bakedMatch.apiDetails.homeStats 
+        : (home.statistics || []);
+        
+      const awayStats = (bakedMatch?.apiDetails?.awayStats?.length > (away.statistics?.length || 0)) 
+        ? bakedMatch.apiDetails.awayStats 
+        : (away.statistics || []);
+
       const apiDetails = {
         status: statusType.description || statusType.name || 'Unknown',
         events: matchEvents,
-        espnId: event.id
+        espnId: event.id,
+        homeStats: homeStats,
+        awayStats: awayStats,
+        homeTeamId: homeAbbr,
+        awayTeamId: awayAbbr
       };
 
       // Find match in local templates
       for (const lm of localTemplates) {
-        if (lm.teamA === homeAbbr && lm.teamB === awayAbbr) {
+        if ((lm.teamA === homeAbbr && lm.teamB === awayAbbr) || (lm.teamA === awayAbbr && lm.teamB === homeAbbr)) {
           mappedMatches.push({
             id: lm.id,
+            teamAId: homeAbbr,
+            teamBId: awayAbbr,
             scoreA: scoreHome,
             scoreB: scoreAway,
-            apiDetails
-          });
-          break;
-        } else if (lm.teamA === awayAbbr && lm.teamB === homeAbbr) {
-          mappedMatches.push({
-            id: lm.id,
-            scoreA: scoreAway,
-            scoreB: scoreHome,
             apiDetails
           });
           break;
