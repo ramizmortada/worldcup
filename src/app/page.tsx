@@ -736,7 +736,7 @@ export default function CompactPredictor() {
     if (!match) return null;
 
     if (match.stage === 'R32') {
-      return <div className="w-[7.5vw] max-w-[120px] my-1 flex justify-center">{renderKnockoutCard(match)}</div>;
+      return <div className="w-[110px] md:w-[120px] my-1 flex justify-center">{renderKnockoutCard(match)}</div>;
     }
 
     const templateMatch = KNOCKOUT_TEMPLATES.find(m => m.id === matchId);
@@ -764,7 +764,7 @@ export default function CompactPredictor() {
       <div className="flex flex-row items-center relative justify-center">
          {side === 'left' && childrenBlock}
          
-         <div className="w-[7.5vw] max-w-[120px] relative z-10 mx-1 flex justify-center">
+         <div className="w-[110px] md:w-[120px] relative z-10 mx-1 flex justify-center">
             {/* horizontal connector to parent if needed */}
             <div className={`absolute top-1/2 w-3 border-t-2 border-slate-700/60 ${
               side === 'left' ? '-left-3' : '-right-3'
@@ -846,7 +846,7 @@ export default function CompactPredictor() {
 
       <ScrollArea className="flex-1 min-h-0 min-w-0 p-1 md:p-2 bg-gradient-to-br from-slate-950 via-slate-900/40 to-slate-950">
            {activeTab === 'bracket' ? (
-             <div className="w-full max-w-none mx-auto space-y-8">
+             <div className="w-full max-w-none mx-auto space-y-8 pb-32">
                {/* Knockout Stage Bracket */}
                <section className="pt-6 space-y-4">
                  <h2 className="text-lg font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
@@ -854,12 +854,12 @@ export default function CompactPredictor() {
                  </h2>
                   <ScrollArea className="w-full pb-4">
                    <div className="min-w-max flex justify-center py-2 overflow-visible items-center">
-                     <div className="flex flex-row justify-center items-center p-2 md:px-4">
+                     <div className="flex flex-col xl:flex-row justify-center items-center p-2 md:px-4">
                        {/* Left Wing (Matches 101's tree) */}
                        <BracketNode matchId={101} side="left" />
 
                        {/* Center Column (Final & Third Place) */}
-                       <div className="flex flex-col items-center gap-12 relative z-20 w-[7.5vw] max-w-[120px] mx-4">
+                       <div className="flex flex-col items-center gap-12 relative z-20 w-[110px] md:w-[120px] my-8 xl:my-0 xl:mx-4">
                           {/* Final */}
                           <div className="w-full flex flex-col items-center -mt-6">
                             {renderKnockoutCard(populatedMatches.find(m => m.id === 104)!)}
@@ -897,8 +897,9 @@ export default function CompactPredictor() {
                             <div className="space-y-1.5">
                               {standings.map((row, idx) => {
                                 const team = getTeam(row.teamId);
+                                const isEliminated = idx === 3 || (idx === 2 && !thirdPlaceStandings.slice(0, 8).some(t => t.teamId === team.id));
                                 return (
-                                  <div key={row.teamId} className="flex items-center justify-between text-[11px] py-1">
+                                  <div key={row.teamId} className={`flex items-center justify-between text-[11px] py-1 ${isEliminated ? 'opacity-40 grayscale' : ''}`}>
                                    <div className="flex items-center gap-1.5 truncate max-w-[140px]">
                                      <span className="font-semibold text-slate-500 w-3 text-right">{idx + 1}</span>
                                      <TeamFlag team={team} />
@@ -950,7 +951,7 @@ export default function CompactPredictor() {
 
              </div>
            ) : (
-             <div className="w-full max-w-4xl mx-auto space-y-6 pt-6">
+             <div className="w-full max-w-4xl mx-auto space-y-6 pt-6 pb-32">
                <h2 className="text-lg font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
                  <Layers className="w-5 h-5 text-indigo-500" /> All Fixtures
                </h2>
