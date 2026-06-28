@@ -32,6 +32,7 @@ export default function CompactPredictor() {
   const [matchStats, setMatchStats] = useState<Record<string, MatchStatsItem[]>>({});
   const [loadingStats, setLoadingStats] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'bracket' | 'fixtures'>('bracket');
+  const [mobileStageTab, setMobileStageTab] = useState<'R32' | 'R16' | 'QF' | 'SF' | 'final'>('R32');
 
   const [isFetching, setIsFetching] = useState(false);
 
@@ -783,12 +784,9 @@ export default function CompactPredictor() {
   return (
     <div className="h-screen w-screen bg-slate-950 text-slate-100 flex flex-col overflow-hidden font-sans select-none">
       {/* Header bar */}
-      <header className="h-14 bg-slate-900/60 border-b border-slate-800/80 px-6 flex items-center justify-between shrink-0 backdrop-blur-md z-10">
+      <header className="h-14 bg-slate-900/60 border-b border-slate-800/80 px-6 flex items-center justify-center gap-6 shrink-0 backdrop-blur-md z-10">
         <div className="flex items-center gap-2.5">
-          <span className="text-xl">🏆</span>
-          <span className="font-extrabold text-sm sm:text-base tracking-wide bg-gradient-to-r from-amber-400 via-yellow-200 to-emerald-400 bg-clip-text text-transparent">
-            FIFA 2026 PREDICTOR
-          </span>
+
           {champion && (
             <div className="hidden sm:flex items-center gap-1.5 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-md ml-4 text-[11px] text-amber-300 font-semibold animate-pulse">
               <Trophy className="w-3.5 h-3.5 text-amber-500" />
@@ -849,10 +847,40 @@ export default function CompactPredictor() {
              <div className="w-full max-w-none mx-auto space-y-8 pb-32">
                {/* Knockout Stage Bracket */}
                <section className="pt-6 space-y-4">
-                 <h2 className="text-lg font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                   <GitCommit className="w-5 h-5 text-emerald-600" /> Knockout Stage
+                 <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest flex items-center justify-center gap-2">
+                   Knockout Stage
                  </h2>
-                  <ScrollArea className="w-full pb-4">
+                  {/* Mobile Tabs Container */}
+                  <div className="xl:hidden flex justify-center overflow-x-auto gap-2 pb-2 hide-scrollbar px-1">
+                    {(['R32', 'R16', 'QF', 'SF', 'final'] as const).map(stage => (
+                      <button
+                        key={stage}
+                        onClick={() => setMobileStageTab(stage)}
+                        className={`whitespace-nowrap px-4 py-2 rounded-full text-xs uppercase tracking-wider font-bold transition-all ${
+                          mobileStageTab === stage ? 'bg-indigo-600 text-white shadow-sm' : 'bg-slate-900/60 text-slate-500 hover:text-slate-300 border border-slate-800'
+                        }`}
+                      >
+                        {stage === 'final' ? 'Finals' : stage}
+                      </button>
+                    ))}
+                  </div>
+                  
+                  {/* Mobile Matches View */}
+                  <div className="xl:hidden grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 w-full max-w-4xl mx-auto py-4 px-1">
+                    {populatedMatches
+                      .filter(m => mobileStageTab === 'final' ? (m.stage === 'final' || m.stage === 'third-place') : m.stage === mobileStageTab)
+                      .map(m => (
+                        <div key={m.id} className="flex justify-center w-full">
+                          <div className="w-full max-w-[280px]">
+                            {renderKnockoutCard(m)}
+                          </div>
+                        </div>
+                      ))
+                    }
+                  </div>
+
+                  {/* Desktop Bracket View */}
+                  <ScrollArea className="hidden xl:block w-full pb-4">
                    <div className="min-w-max flex justify-center py-2 overflow-visible items-center">
                      <div className="flex flex-col xl:flex-row justify-center items-center p-2 md:px-4">
                        {/* Left Wing (Matches 101's tree) */}
@@ -880,10 +908,10 @@ export default function CompactPredictor() {
                </section>
 
                <section className="pt-6 space-y-4">
-                 <h2 className="text-lg font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                   <Layers className="w-5 h-5 text-indigo-500" /> Group Stage
+                 <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest flex items-center justify-center gap-2">
+                   Group Stage
                  </h2>
-                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4 px-2 sm:px-4 md:px-0">
                    {GROUPS.map(g => {
                      const standings = groupStandings[g.name] || [];
                      const groupMatches = populatedMatches.filter(m => m.group === g.name);
@@ -926,7 +954,7 @@ export default function CompactPredictor() {
                  {/* Third-Place Teams */}
                  <div className="mt-8 bg-slate-950/40 rounded-xl p-4 border border-slate-800/80 shadow-inner">
                    <h3 className="text-sm font-semibold text-slate-400 mb-4 flex items-center gap-2 uppercase tracking-widest">
-                     🥉 Third-Place Teams Standings
+                     Third-Place Teams Standings
                    </h3>
                    <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 gap-3">
                      {thirdPlaceStandings.slice(0, 12).map((row, idx) => {
@@ -952,8 +980,8 @@ export default function CompactPredictor() {
              </div>
            ) : (
              <div className="w-full max-w-4xl mx-auto space-y-6 pt-6 pb-32">
-               <h2 className="text-lg font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                 <Layers className="w-5 h-5 text-indigo-500" /> All Fixtures
+                <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest flex items-center justify-center gap-2">
+                 All Fixtures
                </h2>
                <div className="flex flex-col gap-2">
                  {[...populatedMatches].sort((a, b) => a.id - b.id).map(m => {
