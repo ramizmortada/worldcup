@@ -31,6 +31,7 @@ export default function CompactPredictor() {
   const [selectedMatchId, setSelectedMatchId] = useState<number | null>(null);
   const [matchStats, setMatchStats] = useState<Record<string, MatchStatsItem[]>>({});
   const [loadingStats, setLoadingStats] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<'bracket' | 'fixtures'>('bracket');
 
   const [isFetching, setIsFetching] = useState(false);
 
@@ -238,6 +239,21 @@ export default function CompactPredictor() {
       )
     );
     savePredictions(updatedPopulated);
+  };
+
+  const setKnockoutWinner = (matchId: number, teamId: string) => {
+    if (isPlaceholder(teamId)) return;
+    const updated = matches.map(m => {
+      if (m.id === matchId) {
+        if (m.winnerId === teamId) {
+          return { ...m, winnerId: undefined, scoreA: undefined, scoreB: undefined, penaltiesA: undefined, penaltiesB: undefined };
+        }
+        return { ...m, winnerId: teamId, scoreA: undefined, scoreB: undefined, penaltiesA: undefined, penaltiesB: undefined };
+      }
+      return m;
+    });
+    
+    savePredictions(propagateMatches(updated, tournamentMode));
   };
 
   const simulateAllMatches = () => {
@@ -674,9 +690,7 @@ export default function CompactPredictor() {
     const isSpecialMatch = m.stage === 'final' || m.stage === 'third-place';
 
     return (
-      <Card key={m.id} onClick={() => setSelectedMatchId(m.id)} className={`relative overflow-visible w-full shrink-0 bg-slate-950/20 border-slate-850 hover:border-slate-800 transition-colors p-1.5 flex flex-col justify-center cursor-pointer h-[80px] ${
-        isSpecialMatch ? 'h-[104px]' : ''
-      }`}>
+      <Card key={m.id} className="relative overflow-visible w-full shrink-0 bg-slate-950/20 border border-slate-800/70 transition-colors p-1.5 flex flex-col justify-center">
         {/* Match header */}
         {isSpecialMatch && (
           <div className="text-[11px] text-slate-500 font-bold tracking-wider text-center pb-0.5">
@@ -689,8 +703,8 @@ export default function CompactPredictor() {
         {/* Teams panel */}
         <div className="space-y-1">
           {/* Team A */}
-          <div className={`flex items-center justify-between py-0.5 px-1.5 rounded transition-colors ${
-            winnerId === m.teamAId ? 'bg-emerald-950/40 border border-emerald-900/50' : winnerId && !isPlaceholder(winnerId) ? 'opacity-40' : 'bg-slate-900/40 border border-slate-800/50'
+          <div onClick={() => !isPlaceholder(m.teamAId) && setKnockoutWinner(m.id, m.teamAId)} className={`flex items-center justify-between h-6 py-0.5 px-1.5 rounded-md transition-colors cursor-pointer hover:bg-slate-800/60 ${
+            winnerId === m.teamAId ? 'bg-emerald-950/40 border border-emerald-900/50' : winnerId && !isPlaceholder(winnerId) ? 'bg-slate-900/40 border border-slate-800/50 opacity-50' : 'bg-slate-900/40 border border-slate-800/50'
           }`}>
             <div className="flex items-center gap-1.5 min-w-0 flex-1 pr-1">
               <span className="scale-110 shrink-0"><TeamFlag team={teamA} /></span>
@@ -698,39 +712,11 @@ export default function CompactPredictor() {
                 winnerId === m.teamAId ? 'text-emerald-400 font-extrabold' : 'text-slate-300'
               }`} title={teamA.name}>{teamA.code}</span>
             </div>
-            <div className="flex items-center gap-1 shrink-0">
-              {isDraw && m.penaltiesA !== undefined && (
-                <button
-                  type="button"
-                  onClick={() => togglePenaltyWinner(m.id)}
-                  title="Click to switch shootout winner"
-                  className={`text-[10px] font-extrabold font-mono px-1 py-0.5 rounded border transition-all cursor-pointer hover:scale-105 active:scale-95 ${
-                    winnerId === m.teamAId 
-                      ? 'bg-amber-500/25 border-amber-500/50 text-amber-400 font-black shadow-sm shadow-amber-500/10' 
-                      : 'bg-slate-900/60 border-slate-800 text-slate-500 hover:text-amber-500/70 hover:border-amber-500/30'
-                  }`}
-                >
-                  {m.penaltiesA}
-                </button>
-              )}
-              <Input
-                type="text"
-                readOnly={tournamentMode === 'performance'}
-                disabled={isPlaceholder(m.teamAId) || isPlaceholder(m.teamBId)}
-                value={tournamentMode === 'performance' ? (m.scoreA !== undefined ? `${calculatePerformanceScore(m, 'A')} (${m.scoreA})` : '') : (m.scoreA !== undefined ? m.scoreA : '')}
-                onChange={(e) => updateScore(m.id, 'A', e.target.value)}
-                className={`h-7 text-center font-extrabold text-[10px] bg-slate-950 border-slate-800 disabled:opacity-100 disabled:cursor-not-allowed ${
-                  tournamentMode === 'performance' ? 'w-14 px-1 tracking-tighter' : 'w-7 p-0'
-                } ${
-                  m.winnerId === m.teamAId ? 'text-emerald-400 font-black' : m.winnerId && !isPlaceholder(m.winnerId) ? 'text-slate-500' : 'text-emerald-400 focus-visible:ring-emerald-500/20'
-                }`}
-                placeholder="-"
-              />
-            </div>
+            {winnerId === m.teamAId && <div className="text-emerald-400 text-xs font-black">✓</div>}
           </div>
           {/* Team B */}
-          <div className={`flex items-center justify-between py-0.5 px-1.5 rounded transition-colors ${
-            winnerId === m.teamBId ? 'bg-emerald-950/40 border border-emerald-900/50' : winnerId && !isPlaceholder(winnerId) ? 'opacity-40' : 'bg-slate-900/40 border border-slate-800/50'
+          <div onClick={() => !isPlaceholder(m.teamBId) && setKnockoutWinner(m.id, m.teamBId)} className={`flex items-center justify-between h-6 py-0.5 px-1.5 rounded-md transition-colors cursor-pointer hover:bg-slate-800/60 ${
+            winnerId === m.teamBId ? 'bg-emerald-950/40 border border-emerald-900/50' : winnerId && !isPlaceholder(winnerId) ? 'bg-slate-900/40 border border-slate-800/50 opacity-50' : 'bg-slate-900/40 border border-slate-800/50'
           }`}>
             <div className="flex items-center gap-1.5 min-w-0 flex-1 pr-1">
               <span className="scale-110 shrink-0"><TeamFlag team={teamB} /></span>
@@ -738,35 +724,7 @@ export default function CompactPredictor() {
                 winnerId === m.teamBId ? 'text-emerald-400 font-extrabold' : 'text-slate-300'
               }`} title={teamB.name}>{teamB.code}</span>
             </div>
-            <div className="flex items-center gap-1 shrink-0">
-              {isDraw && m.penaltiesB !== undefined && (
-                <button
-                  type="button"
-                  onClick={() => togglePenaltyWinner(m.id)}
-                  title="Click to switch shootout winner"
-                  className={`text-[10px] font-extrabold font-mono px-1 py-0.5 rounded border transition-all cursor-pointer hover:scale-105 active:scale-95 ${
-                    winnerId === m.teamBId 
-                      ? 'bg-amber-500/25 border-amber-500/50 text-amber-400 font-black shadow-sm shadow-amber-500/10' 
-                      : 'bg-slate-900/60 border-slate-800 text-slate-500 hover:text-amber-500/70 hover:border-amber-500/30'
-                  }`}
-                >
-                  {m.penaltiesB}
-                </button>
-              )}
-              <Input
-                type="text"
-                readOnly={tournamentMode === 'performance'}
-                disabled={isPlaceholder(m.teamAId) || isPlaceholder(m.teamBId)}
-                value={tournamentMode === 'performance' ? (m.scoreB !== undefined ? `${calculatePerformanceScore(m, 'B')} (${m.scoreB})` : '') : (m.scoreB !== undefined ? m.scoreB : '')}
-                onChange={(e) => updateScore(m.id, 'B', e.target.value)}
-                className={`h-7 text-center font-extrabold text-[10px] bg-slate-950 border-slate-800 disabled:opacity-100 disabled:cursor-not-allowed ${
-                  tournamentMode === 'performance' ? 'w-14 px-1 tracking-tighter' : 'w-7 p-0'
-                } ${
-                  m.winnerId === m.teamBId ? 'text-emerald-400 font-black' : m.winnerId && !isPlaceholder(m.winnerId) ? 'text-slate-500' : 'text-emerald-400 focus-visible:ring-emerald-500/20'
-                }`}
-                placeholder="-"
-              />
-            </div>
+            {winnerId === m.teamBId && <div className="text-emerald-400 text-xs font-black">✓</div>}
           </div>
         </div>
       </Card>
@@ -778,7 +736,7 @@ export default function CompactPredictor() {
     if (!match) return null;
 
     if (match.stage === 'R32') {
-      return <div className="w-[10.5vw] max-w-[190px] my-2 flex justify-center">{renderKnockoutCard(match)}</div>;
+      return <div className="w-[7.5vw] max-w-[120px] my-1 flex justify-center">{renderKnockoutCard(match)}</div>;
     }
 
     const templateMatch = KNOCKOUT_TEMPLATES.find(m => m.id === matchId);
@@ -788,25 +746,25 @@ export default function CompactPredictor() {
     const childBId = parseInt(templateMatch.teamBId.replace('W', ''));
 
     const childrenBlock = (
-      <div className={`flex flex-col justify-around h-full relative py-2 ${side === 'left' ? 'pr-3' : 'pl-3'} flex-1 w-full`}>
+      <div className={`flex flex-col justify-around h-full relative py-1 ${side === 'left' ? 'pr-3' : 'pl-3'}`}>
          {/* Connecting vertical/horizontal lines */}
          <div className={`absolute top-[25%] bottom-[25%] w-3 border-slate-700/60 ${
            side === 'left' ? 'right-0 border-r-2 border-y-2 rounded-r-xl' : 'left-0 border-l-2 border-y-2 rounded-l-xl'
          }`} />
-         <div className="relative z-10 w-full">
+         <div className="relative z-10">
             <BracketNode matchId={childAId} side={side} />
          </div>
-         <div className="relative z-10 w-full">
+         <div className="relative z-10">
             <BracketNode matchId={childBId} side={side} />
          </div>
       </div>
     );
 
     return (
-      <div className="flex flex-row items-center relative flex-1 w-full justify-between">
+      <div className="flex flex-row items-center relative justify-center">
          {side === 'left' && childrenBlock}
          
-         <div className="w-[10.5vw] max-w-[190px] relative z-10 mx-1 flex justify-center">
+         <div className="w-[7.5vw] max-w-[120px] relative z-10 mx-1 flex justify-center">
             {/* horizontal connector to parent if needed */}
             <div className={`absolute top-1/2 w-3 border-t-2 border-slate-700/60 ${
               side === 'left' ? '-left-3' : '-right-3'
@@ -837,25 +795,26 @@ export default function CompactPredictor() {
               <span>Winner: {champion.name}</span>
             </div>
           )}
-          
           <div className="hidden sm:flex items-center ml-6 bg-slate-950 rounded-full p-1 border border-slate-800 shadow-inner">
             <button
-              onClick={() => setTournamentMode('standard')}
+              onClick={() => setActiveTab('bracket')}
               className={`px-3 py-1 rounded-full text-[11px] uppercase tracking-wider font-bold transition-all ${
-                tournamentMode === 'standard' ? 'bg-slate-700 text-white shadow-sm' : 'text-slate-500 hover:text-slate-300'
+                activeTab === 'bracket' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:text-slate-300'
               }`}
             >
-              Standard
+              Bracket
             </button>
             <button
-              onClick={() => setTournamentMode('performance')}
+              onClick={() => setActiveTab('fixtures')}
               className={`px-3 py-1 rounded-full text-[11px] uppercase tracking-wider font-bold transition-all ${
-                tournamentMode === 'performance' ? 'bg-amber-600 text-white shadow-sm' : 'text-slate-500 hover:text-slate-300'
+                activeTab === 'fixtures' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:text-slate-300'
               }`}
             >
-              Fair Play
+              Fixtures
             </button>
           </div>
+
+
         </div>
         <div className="flex items-center gap-2">
           <Button
@@ -886,107 +845,141 @@ export default function CompactPredictor() {
       {/* Horizontal scrolling wrapper */}
 
       <ScrollArea className="flex-1 min-h-0 min-w-0 p-1 md:p-2 bg-gradient-to-br from-slate-950 via-slate-900/40 to-slate-950">
-           <div className="w-full max-w-none mx-auto space-y-8">
-             <section className="pt-6 space-y-4">
-               <h2 className="text-lg font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                 <Layers className="w-5 h-5 text-indigo-500" /> Group Stage
-               </h2>
-               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
-                 {GROUPS.map(g => {
-                   const standings = groupStandings[g.name] || [];
-                   const groupMatches = populatedMatches.filter(m => m.group === g.name);
-                   return (
-                     <Card key={g.name} className="bg-slate-900/30 border-slate-800/80 shadow-xl">
-                       <CardHeader className="p-3 pb-1">
-                         <span className="text-xs font-bold text-emerald-400">Group {g.name}</span>
-                       </CardHeader>
-                       <CardContent className="p-3 space-y-3">
-                          {/* Standings */}
-                          <div className="space-y-1.5">
-                            {standings.map((row, idx) => {
-                              const team = getTeam(row.teamId);
-                              return (
-                                <div key={row.teamId} className="flex items-center justify-between text-[11px] py-1">
-                                 <div className="flex items-center gap-1.5 truncate max-w-[140px]">
-                                   <span className="font-semibold text-slate-500 w-3 text-right">{idx + 1}</span>
-                                   <TeamFlag team={team} />
-                                   <span className="truncate text-slate-300" title={`FIFA World Ranking: #${team.rank} (${team.rating} pts)`}>{team.name} <span className="text-[10px] text-indigo-300/80 font-bold ml-1">#{team.rank}</span></span>
-                                 </div>
-                                 <div className="flex gap-2 font-mono shrink-0">
-                                   <span className="text-slate-500 w-6 text-right">{row.gd > 0 ? `+${row.gd}` : row.gd}</span>
-                                   <span className="font-bold text-emerald-400 w-4 text-right">{row.pts}</span>
-                                 </div>
-                               </div>
-                             );
-                           })}
-                         </div>
-                          {/* Matches */}
-                          <div className="flex flex-col border-t border-slate-800/60 pt-2 mt-2">
-                            {groupMatches.map(renderMatchCard)}
-                          </div>
-                       </CardContent>
-                     </Card>
-                   );
-                 })}
-               </div>
+           {activeTab === 'bracket' ? (
+             <div className="w-full max-w-none mx-auto space-y-8">
+               {/* Knockout Stage Bracket */}
+               <section className="pt-6 space-y-4">
+                 <h2 className="text-lg font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                   <GitCommit className="w-5 h-5 text-emerald-600" /> Knockout Stage
+                 </h2>
+                  <ScrollArea className="w-full pb-4">
+                   <div className="min-w-max flex justify-center py-2 overflow-visible items-center">
+                     <div className="flex flex-row justify-center items-center p-2 md:px-4">
+                       {/* Left Wing (Matches 101's tree) */}
+                       <BracketNode matchId={101} side="left" />
 
-               {/* Advanced Third-Place Teams */}
-               <div className="mt-8 bg-slate-950/40 rounded-xl p-4 border border-slate-800/80 shadow-inner">
-                 <h3 className="text-sm font-semibold text-slate-400 mb-4 flex items-center gap-2 uppercase tracking-widest">
-                   🥉 Advanced Third-Place Teams
-                 </h3>
-                 <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
-                   {thirdPlaceStandings.slice(0, 8).map((row, idx) => {
-                     const team = getTeam(row.teamId);
-                     return (
-                       <div key={row.teamId} className="flex items-center justify-between bg-slate-900/40 border border-slate-800/80 rounded-lg p-2.5 shadow-sm hover:border-slate-700 transition-colors">
-                         <div className="flex items-center gap-2">
-                           <span className="text-slate-500 font-bold text-[10px] w-3">{idx + 1}</span>
-                           <TeamFlag team={team} />
-                           <span className="text-xs font-semibold text-slate-200 truncate max-w-[60px]" title={team.name}>{team.code}</span>
-                         </div>
-                         <span className="font-mono text-[10px] font-bold text-indigo-400 bg-indigo-500/10 px-1.5 py-0.5 rounded">
-                           {row.pts} PTS
-                         </span>
+                       {/* Center Column (Final & Third Place) */}
+                       <div className="flex flex-col items-center gap-12 relative z-20 w-[7.5vw] max-w-[120px] mx-4">
+                          {/* Final */}
+                          <div className="w-full flex flex-col items-center -mt-6">
+                            {renderKnockoutCard(populatedMatches.find(m => m.id === 104)!)}
+                          </div>
+
+                          {/* Third Place */}
+                          <div className="w-full flex flex-col items-center">
+                            {renderKnockoutCard(populatedMatches.find(m => m.id === 103)!)}
+                          </div>
                        </div>
+
+                       {/* Right Wing (Matches 102's tree) */}
+                       <BracketNode matchId={102} side="right" />
+                     </div>
+                   </div>
+                   <ScrollBar orientation="horizontal" />
+                 </ScrollArea>
+               </section>
+
+               <section className="pt-6 space-y-4">
+                 <h2 className="text-lg font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                   <Layers className="w-5 h-5 text-indigo-500" /> Group Stage
+                 </h2>
+                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+                   {GROUPS.map(g => {
+                     const standings = groupStandings[g.name] || [];
+                     const groupMatches = populatedMatches.filter(m => m.group === g.name);
+                     return (
+                       <Card key={g.name} className="bg-slate-900/30 border-slate-800/80 shadow-xl">
+                         <CardHeader className="p-3 pb-1">
+                           <span className="text-xs font-bold text-emerald-400">Group {g.name}</span>
+                         </CardHeader>
+                         <CardContent className="p-3 space-y-3">
+                            {/* Standings */}
+                            <div className="space-y-1.5">
+                              {standings.map((row, idx) => {
+                                const team = getTeam(row.teamId);
+                                return (
+                                  <div key={row.teamId} className="flex items-center justify-between text-[11px] py-1">
+                                   <div className="flex items-center gap-1.5 truncate max-w-[140px]">
+                                     <span className="font-semibold text-slate-500 w-3 text-right">{idx + 1}</span>
+                                     <TeamFlag team={team} />
+                                     <span className="truncate text-slate-300" title={`FIFA World Ranking: #${team.rank} (${team.rating} pts)`}>{team.name} <span className="text-[10px] text-indigo-300/80 font-bold ml-1">#{team.rank}</span></span>
+                                   </div>
+                                   <div className="flex gap-2 font-mono shrink-0">
+                                     <span className="text-slate-500 w-6 text-right">{row.gd > 0 ? `+${row.gd}` : row.gd}</span>
+                                     <span className="font-bold text-emerald-400 w-4 text-right">{row.pts}</span>
+                                   </div>
+                                 </div>
+                               );
+                             })}
+                           </div>
+                            {/* Matches */}
+                            <div className="flex flex-col border-t border-slate-800/60 pt-2 mt-2">
+                              {groupMatches.map(renderMatchCard)}
+                            </div>
+                         </CardContent>
+                       </Card>
                      );
                    })}
                  </div>
-               </div>
-             </section>
 
-             {/* Knockout Stage Bracket */}
-             <section className="pt-6 space-y-4">
-               <h2 className="text-lg font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                 <GitCommit className="w-5 h-5 text-emerald-600" /> Knockout Stage
-               </h2>
-                <ScrollArea className="w-full pb-4">
-                 <div className="w-full flex justify-center py-2 bg-slate-950 rounded-xl overflow-visible items-center">
-                   <div className="flex flex-row justify-between w-full items-center bg-slate-900/30 p-2 md:px-4 rounded-xl border border-slate-800/80 shadow-2xl">
-                     {/* Left Wing (Matches 101's tree) */}
-                     <BracketNode matchId={101} side="left" />
-
-                     {/* Center Column (Final & Third Place) */}
-                     <div className="flex flex-col items-center gap-16 relative z-20 w-[10.5vw] max-w-[190px]">
-                        {/* Final */}
-                        <div className="w-full flex flex-col items-center -mt-6">
-                          {renderKnockoutCard(populatedMatches.find(m => m.id === 104)!)}
-                        </div>
-
-                        {/* Third Place */}
-                        <div className="w-full flex flex-col items-center">
-                          {renderKnockoutCard(populatedMatches.find(m => m.id === 103)!)}
-                        </div>
-                     </div>
-
-                     {/* Right Wing (Matches 102's tree) */}
-                     <BracketNode matchId={102} side="right" />
+                 {/* Third-Place Teams */}
+                 <div className="mt-8 bg-slate-950/40 rounded-xl p-4 border border-slate-800/80 shadow-inner">
+                   <h3 className="text-sm font-semibold text-slate-400 mb-4 flex items-center gap-2 uppercase tracking-widest">
+                     🥉 Third-Place Teams Standings
+                   </h3>
+                   <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 gap-3">
+                     {thirdPlaceStandings.slice(0, 12).map((row, idx) => {
+                       const team = getTeam(row.teamId);
+                       const isEliminated = idx >= 8;
+                       return (
+                         <div key={row.teamId} className={`flex items-center justify-between bg-slate-900/40 border border-slate-800/80 rounded-lg p-2.5 shadow-sm transition-colors ${isEliminated ? 'opacity-40 grayscale' : 'hover:border-slate-700'}`}>
+                           <div className="flex items-center gap-2">
+                             <span className="text-slate-500 font-bold text-[10px] w-3">{idx + 1}</span>
+                             <TeamFlag team={team} />
+                             <span className={`text-xs font-semibold truncate max-w-[60px] ${isEliminated ? 'text-slate-400' : 'text-slate-200'}`} title={team.name}>{team.code}</span>
+                           </div>
+                           <span className={`font-mono text-[10px] font-bold px-1.5 py-0.5 rounded ${isEliminated ? 'text-slate-500 bg-slate-800/50' : 'text-indigo-400 bg-indigo-500/10'}`}>
+                             {row.pts} PTS
+                           </span>
+                         </div>
+                       );
+                     })}
                    </div>
                  </div>
-                 <ScrollBar orientation="horizontal" />
-               </ScrollArea>
-             </section>
-           </div>
+               </section>
+
+             </div>
+           ) : (
+             <div className="w-full max-w-4xl mx-auto space-y-6 pt-6">
+               <h2 className="text-lg font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                 <Layers className="w-5 h-5 text-indigo-500" /> All Fixtures
+               </h2>
+               <div className="flex flex-col gap-2">
+                 {[...populatedMatches].sort((a, b) => a.id - b.id).map(m => {
+                   const teamA = getTeam(m.teamAId);
+                   const teamB = getTeam(m.teamBId);
+                   return (
+                     <div key={m.id} className="flex items-center justify-between bg-slate-900/60 p-3 rounded-lg border border-slate-800 hover:border-slate-700 cursor-pointer transition-colors" onClick={() => setSelectedMatchId(m.id)}>
+                       <div className="flex items-center gap-4 w-1/3 justify-end">
+                         <span className="font-bold text-sm">{teamA.name}</span>
+                         <TeamFlag team={teamA} />
+                       </div>
+                       <div className="flex flex-col items-center justify-center w-1/3">
+                         <span className="text-xs text-slate-500 font-semibold mb-1 uppercase tracking-wider">{m.stage === 'group' ? `Group ${m.group}` : m.stage}</span>
+                         <div className="text-lg font-black text-emerald-400 tabular-nums">
+                           {m.scoreA !== undefined ? m.scoreA : '-'} : {m.scoreB !== undefined ? m.scoreB : '-'}
+                         </div>
+                       </div>
+                       <div className="flex items-center gap-4 w-1/3 justify-start">
+                         <TeamFlag team={teamB} />
+                         <span className="font-bold text-sm">{teamB.name}</span>
+                       </div>
+                     </div>
+                   );
+                 })}
+               </div>
+             </div>
+           )}
         </ScrollArea>
         <MatchDetailsModal />
     </div>
