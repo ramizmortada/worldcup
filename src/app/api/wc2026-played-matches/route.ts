@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
 
+export const dynamic = 'force-dynamic';
+
 // Define the groups and teams exactly as in data.ts
 const GROUPS = [
   { name: 'A', teams: ['MEX', 'RSA', 'KOR', 'CZE'] },
@@ -66,7 +68,7 @@ async function getLocalFallback(): Promise<any> {
 
 export async function GET() {
   const localTemplates = generateLocalMatches();
-  const espnUrl = 'https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard?dates=20260611-20260627&limit=200';
+  const espnUrl = 'https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard?dates=20260611-20260719&limit=200';
   const bakedData = await getLocalFallback();
 
   try {
@@ -98,8 +100,8 @@ export async function GET() {
       const comp = comps[0];
       const statusType = comp.status?.type || {};
       
-      // Skip if the game has not started yet
-      if (statusType.state === 'pre') continue;
+      // We now include 'pre' matches so that the frontend can display their scheduled date/time
+      const isPre = statusType.state === 'pre';
 
       const competitors = comp.competitors || [];
       if (competitors.length < 2) continue;
@@ -113,15 +115,20 @@ export async function GET() {
       const homeScoreStr = home.score;
       const awayScoreStr = away.score;
 
-      if (!homeAbbr || !awayAbbr || homeScoreStr === undefined || awayScoreStr === undefined) {
-        continue;
-      }
+      let scoreHome = undefined;
+      let scoreAway = undefined;
 
-      const scoreHome = parseInt(homeScoreStr, 10);
-      const scoreAway = parseInt(awayScoreStr, 10);
+      if (!isPre) {
+        if (!homeAbbr || !awayAbbr || homeScoreStr === undefined || awayScoreStr === undefined) {
+          continue;
+        }
 
-      if (isNaN(scoreHome) || isNaN(scoreAway)) {
-        continue;
+        scoreHome = parseInt(homeScoreStr, 10);
+        scoreAway = parseInt(awayScoreStr, 10);
+
+        if (isNaN(scoreHome) || isNaN(scoreAway)) {
+          continue;
+        }
       }
 
       const matchEvents = (comp.details || []).map((detail: any) => ({
@@ -143,6 +150,7 @@ export async function GET() {
 
       const apiDetails = {
         status: statusType.description || statusType.name || 'Unknown',
+        date: event.date,
         events: matchEvents,
         espnId: event.id,
         homeStats: homeStats,
@@ -151,20 +159,28 @@ export async function GET() {
         awayTeamId: awayAbbr
       };
 
-      // Find match in local templates
+      // Find match in local templates for group stages
+      let matchedId = undefined;
       for (const lm of localTemplates) {
         if ((lm.teamA === homeAbbr && lm.teamB === awayAbbr) || (lm.teamA === awayAbbr && lm.teamB === homeAbbr)) {
-          mappedMatches.push({
-            id: lm.id,
-            teamAId: homeAbbr,
-            teamBId: awayAbbr,
-            scoreA: scoreHome,
-            scoreB: scoreAway,
-            apiDetails
-          });
+          matchedId = lm.id;
           break;
         }
       }
+
+      const winnerHome = home.winner;
+      const winnerAway = away.winner;
+
+      mappedMatches.push({
+        id: matchedId, // undefined if not in group stage
+        teamAId: homeAbbr,
+        teamBId: awayAbbr,
+        scoreA: scoreHome,
+        scoreB: scoreAway,
+        winnerHome,
+        winnerAway,
+        apiDetails
+      });
     }
 
     // If we didn't get any matched games but ESPN returned data, check fallback just in case
@@ -174,8 +190,8 @@ export async function GET() {
       return NextResponse.json(fallback);
     }
 
-    // Sort by id for cleaner output
-    mappedMatches.sort((a, b) => a.id - b.id);
+    // Sort by id for cleaner output (group matches first)
+    mappedMatches.sort((a, b) => (a.id || 999) - (b.id || 999));
     return NextResponse.json({ matches: mappedMatches });
 
   } catch (error) {
